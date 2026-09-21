@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Iterator
 from contextlib import contextmanager
-import fcntl
+import errno
 import glob
 import json
 import os
@@ -18,6 +18,11 @@ import sys
 import time
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +41,31 @@ class FirmwareToolError(RuntimeError):
     """A user-actionable firmware tooling error."""
 
 
+def _try_lock_file(lock_file: Any) -> bool:
+    lock_file.seek(0)
+    if os.name == "nt":
+        try:
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError as error:
+            if error.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                return False
+            raise
+        return True
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
+def _unlock_file(lock_file: Any) -> None:
+    lock_file.seek(0)
+    if os.name == "nt":
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 @contextmanager
 def shared_idf_lock(
     profile: "Profile",
@@ -47,13 +77,18 @@ def shared_idf_lock(
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock_file:
-        try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        # msvcrt byte-range locking requires the byte to exist. Keeping one
+        # whitespace byte also preserves the previous empty-holder behavior.
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write("\n")
+            lock_file.flush()
+        if not _try_lock_file(lock_file):
             lock_file.seek(0)
             holder = lock_file.read().strip() or "another firmware command"
             print(f"==> Waiting for shared ESP-IDF lock ({holder})", flush=True)
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            while not _try_lock_file(lock_file):
+                time.sleep(0.1)
 
         lock_file.seek(0)
         lock_file.truncate()
@@ -70,8 +105,20 @@ def shared_idf_lock(
         finally:
             lock_file.seek(0)
             lock_file.truncate()
+            lock_file.write("\n")
             lock_file.flush()
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            _unlock_file(lock_file)
+
+
+@dataclass(frozen=True)
+class CompanionBuild:
+    description: str
+    project_dir: Path
+    target: str
+    build_dir: Path
+    sdkconfig: Path
+    sdkconfig_defaults: tuple[Path, ...]
+    image: Path
 
 
 @dataclass(frozen=True)
@@ -92,6 +139,7 @@ class Profile:
     flash_before: str
     application_usb_products: tuple[str, ...]
     rom_usb_products: tuple[str, ...]
+    companion: CompanionBuild | None
 
 
 @dataclass(frozen=True)
@@ -240,6 +288,40 @@ def load_profiles(
             raise FirmwareToolError(
                 f"profile '{name}' needs rom_usb_products for USB auto-download"
             )
+        companion_raw = raw.get("companion")
+        companion: CompanionBuild | None = None
+        if companion_raw is not None:
+            if not isinstance(companion_raw, dict):
+                raise FirmwareToolError(f"profile '{name}' companion must be an object")
+            companion_target = companion_raw.get("target")
+            if not isinstance(companion_target, str) or not re.fullmatch(r"esp32[a-z0-9]+", companion_target):
+                raise FirmwareToolError(f"profile '{name}' companion has invalid target")
+            companion_project = companion_raw.get("project_dir")
+            companion_build = companion_raw.get("build_dir")
+            companion_image = companion_raw.get("image")
+            if not all(isinstance(value, str) and value for value in
+                       (companion_project, companion_build, companion_image)):
+                raise FirmwareToolError(f"profile '{name}' companion paths must be non-empty strings")
+            companion_build_dir = _resolve_path(companion_build, workspace_root)
+            companion_sdkconfig_name = companion_raw.get("sdkconfig_name", "sdkconfig")
+            companion_defaults_raw = companion_raw.get("sdkconfig_defaults")
+            if (not isinstance(companion_sdkconfig_name, str) or not companion_sdkconfig_name or
+                    not isinstance(companion_defaults_raw, list) or not companion_defaults_raw or
+                    not all(isinstance(item, str) and item for item in companion_defaults_raw)):
+                raise FirmwareToolError(f"profile '{name}' companion has invalid sdkconfig settings")
+            companion_description = companion_raw.get("description", "companion firmware")
+            if not isinstance(companion_description, str):
+                raise FirmwareToolError(f"profile '{name}' companion has invalid description")
+            companion = CompanionBuild(
+                description=companion_description,
+                project_dir=_resolve_path(companion_project, workspace_root),
+                target=companion_target,
+                build_dir=companion_build_dir,
+                sdkconfig=companion_build_dir / companion_sdkconfig_name,
+                sdkconfig_defaults=tuple(_resolve_path(item, workspace_root) for item in companion_defaults_raw),
+                image=companion_build_dir / companion_image,
+            )
+
         profiles[name] = Profile(
             name=name,
             description=description,
@@ -257,6 +339,7 @@ def load_profiles(
             flash_before=flash_before,
             application_usb_products=tuple(products_raw),
             rom_usb_products=tuple(rom_products_raw),
+            companion=companion,
         )
     return profiles
 
@@ -300,19 +383,26 @@ def with_overrides(profile: Profile, args: argparse.Namespace) -> Profile:
         flash_before=profile.flash_before,
         application_usb_products=profile.application_usb_products,
         rom_usb_products=profile.rom_usb_products,
+        companion=profile.companion,
     )
 
 
 def locate_idf_py(environ: Mapping[str, str] | None = None) -> Path:
     environ = os.environ if environ is None else environ
     executable = shutil.which("idf.py")
+    idf_path = environ.get("IDF_PATH")
+    expected = (Path(idf_path) / "tools" / "idf.py").resolve() if idf_path else None
+    # On Windows, activation normally puts idf.py.exe (the IDF launcher) on
+    # PATH while IDF_PATH still names the authoritative Python entry point.
+    # Execute that script with the build's recorded Python environment. This
+    # also handles default PATHEXT installations that cannot locate *.py.
+    if os.name == "nt" and expected is not None and expected.is_file():
+        return expected
     if not executable:
         raise FirmwareToolError(
             "idf.py is unavailable; activate ESP-IDF or use the board shell wrapper"
         )
-    idf_path = environ.get("IDF_PATH")
-    if idf_path:
-        expected = (Path(idf_path) / "tools" / "idf.py").resolve()
+    if expected is not None:
         actual = Path(executable).resolve()
         if actual != expected:
             raise FirmwareToolError(
@@ -321,10 +411,46 @@ def locate_idf_py(environ: Mapping[str, str] | None = None) -> Path:
     return Path(executable).resolve()
 
 
+def idf_python(
+    profile: Profile, environ: Mapping[str, str] | None = None
+) -> Path:
+    """Return the ESP-IDF Python associated with this build when available.
+
+    On Windows, Conda can remain first on PATH even after an ESP-IDF shell was
+    opened.  A configured build records the interpreter that owns esptool and
+    the rest of the IDF packages, so flash-built and monitor should reuse it
+    instead of blindly invoking sys.executable.
+    """
+
+    environ = os.environ if environ is None else environ
+    env_path = environ.get("IDF_PYTHON_ENV_PATH", "")
+    if env_path:
+        env_root = Path(env_path).expanduser()
+        relative = Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
+        candidate = (env_root / relative).resolve()
+        if candidate.is_file():
+            return candidate
+
+    cache_path = profile.build_dir / "CMakeCache.txt"
+    try:
+        cache_lines = cache_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        cache_lines = []
+    for prefix in ("_Python3_EXECUTABLE:INTERNAL=", "PYTHON:FILEPATH="):
+        for line in cache_lines:
+            if not line.startswith(prefix):
+                continue
+            candidate = Path(line.removeprefix(prefix)).expanduser().resolve()
+            if candidate.is_file():
+                return candidate
+
+    return Path(sys.executable).resolve()
+
+
 def idf_command(
     profile: Profile, idf_py: Path, idf_arguments: Sequence[str]
 ) -> list[str]:
-    command = [str(idf_py)]
+    command = [str(idf_python(profile)), str(idf_py)] if os.name == "nt" else [str(idf_py)]
     # ESP-IDF target opt-in (required by S31), not MicroPixel board support status.
     if profile.preview:
         command.append("--preview")
@@ -347,16 +473,32 @@ def idf_command(
     return command
 
 
+def companion_idf_command(profile: Profile, idf_py: Path, idf_arguments: Sequence[str]) -> list[str]:
+    companion = profile.companion
+    if companion is None:
+        raise FirmwareToolError(f"profile '{profile.name}' has no companion build")
+    command = [str(idf_python(profile)), str(idf_py)] if os.name == "nt" else [str(idf_py)]
+    command.extend((
+        "-C", str(companion.project_dir),
+        "-B", str(companion.build_dir),
+        "-D", f"SDKCONFIG={companion.sdkconfig}",
+        "-D", "SDKCONFIG_DEFAULTS=" + ";".join(str(path) for path in companion.sdkconfig_defaults),
+        "-D", f"IDF_TARGET={companion.target}",
+    ))
+    command.extend(idf_arguments)
+    return command
+
+
 def chip_matches(profile: Profile, probe_output: str) -> bool:
     folded_output = probe_output.casefold()
     return any(marker.casefold() in folded_output for marker in profile.chip_markers)
 
 
-def _reset_after_mismatched_probe(port: str) -> None:
+def _reset_after_mismatched_probe(profile: Profile, port: str) -> None:
     try:
         subprocess.run(
             [
-                sys.executable,
+                str(idf_python(profile)),
                 "-m",
                 "esptool",
                 "--port",
@@ -382,7 +524,7 @@ def probe_port(
     try:
         result = subprocess.run(
             [
-                sys.executable,
+                str(idf_python(profile)),
                 "-m",
                 "esptool",
                 "--port",
@@ -402,8 +544,13 @@ def probe_port(
     except (OSError, subprocess.TimeoutExpired) as error:
         return False, str(error)
     matched = chip_matches(profile, result.stdout)
+    if result.returncode and "no module named esptool" in result.stdout.casefold():
+        raise FirmwareToolError(
+            f"esptool is unavailable in {idf_python(profile)}; activate ESP-IDF "
+            "or rebuild this profile so its Python environment is recorded"
+        )
     if not matched and "esp32" in result.stdout.casefold():
-        _reset_after_mismatched_probe(port)
+        _reset_after_mismatched_probe(profile, port)
     return matched, result.stdout
 
 
@@ -687,6 +834,23 @@ def validate_profile_files(profile: Profile) -> None:
         raise FirmwareToolError(
             f"profile '{profile.name}' has missing sdkconfig defaults:\n  {joined}"
         )
+    if profile.companion is not None:
+        companion_missing = [path for path in profile.companion.sdkconfig_defaults if not path.is_file()]
+        if not profile.companion.project_dir.is_dir():
+            companion_missing.insert(0, profile.companion.project_dir)
+        if companion_missing:
+            joined = "\n  ".join(str(path) for path in companion_missing)
+            raise FirmwareToolError(f"profile '{profile.name}' has missing companion inputs:\n  {joined}")
+
+
+def build_profile(profile: Profile, idf_py: Path) -> None:
+    if profile.companion is not None:
+        profile.companion.build_dir.mkdir(parents=True, exist_ok=True)
+        print(f"==> Building companion: {profile.companion.description}", flush=True)
+        run_idf(companion_idf_command(profile, idf_py, ("build",)))
+        if not profile.companion.image.is_file():
+            raise FirmwareToolError(f"companion image missing after build: {profile.companion.image}")
+    run_idf(idf_command(profile, idf_py, ("build",)))
 
 
 def run_idf(command: Sequence[str], *, environ: Mapping[str, str] | None = None) -> None:
@@ -730,7 +894,7 @@ def _flashed_reference(path: str) -> str:
 def run_esptool_flash(profile: Profile, port: str, baud: int) -> None:
     write_args, flash_files, after, use_stub = _load_flash_manifest(profile)
     command = [
-        sys.executable,
+        str(idf_python(profile)),
         "-m",
         "esptool",
         "--chip",
@@ -746,7 +910,13 @@ def run_esptool_flash(profile: Profile, port: str, baud: int) -> None:
     ]
     if not use_stub:
         command.append("--no-stub")
-    command.extend(("write-flash", *write_args))
+    command.append("write-flash")
+    # A companion image is intentionally staged as opaque data in the Host's
+    # flash. esptool recognizes its ESP image header and otherwise rejects it
+    # because its chip ID differs from the Host selected above.
+    if profile.companion is not None:
+        command.append("--force")
+    command.extend(write_args)
     for offset, path in flash_files:
         command.extend((offset, path))
 
@@ -851,25 +1021,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         validate_profile_files(profile)
-        idf_py = locate_idf_py()
         if args.action == "build":
+            idf_py = locate_idf_py()
             profile.build_dir.mkdir(parents=True, exist_ok=True)
             with shared_idf_lock(profile, args.action):
-                run_idf(idf_command(profile, idf_py, ("build",)))
+                build_profile(profile, idf_py)
             return 0
         if args.action == "fullclean":
+            idf_py = locate_idf_py()
             with shared_idf_lock(profile, args.action):
                 run_idf(idf_command(profile, idf_py, ("fullclean",)))
+                if profile.companion is not None:
+                    run_idf(companion_idf_command(profile, idf_py, ("fullclean",)))
             return 0
 
         if args.action == "flash":
+            idf_py = locate_idf_py()
             profile.build_dir.mkdir(parents=True, exist_ok=True)
             with shared_idf_lock(profile, "build"):
-                run_idf(idf_command(profile, idf_py, ("build",)))
+                build_profile(profile, idf_py)
         if args.action in ("flash", "flash-built"):
             if args.action == "flash-built" and not (profile.build_dir / "micropixel.elf").is_file():
                 raise FirmwareToolError(
                     f"Host ELF missing: {profile.build_dir / 'micropixel.elf'}; build the profile first"
+                )
+            if profile.companion is not None and not profile.companion.image.is_file():
+                raise FirmwareToolError(
+                    f"companion image missing: {profile.companion.image}; build the profile first"
                 )
             port = resolve_flash_port(profile, args.port)
             baud = resolve_baud(profile, args.baud)
@@ -880,6 +1058,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not elf.is_file():
             raise FirmwareToolError(f"Host ELF missing: {elf}; build the profile first")
         port = resolve_monitor_port(profile, args.port)
+        idf_py = locate_idf_py()
         monitor_environment = os.environ.copy()
         if args.reset:
             monitor_environment.pop("ESP_IDF_MONITOR_NO_RESET", None)

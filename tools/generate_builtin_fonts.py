@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -188,8 +190,11 @@ def run_converter(
     symbol = f"font_builtin_latin_{size}"
     with tempfile.TemporaryDirectory() as temporary:
         temporary_output = Path(temporary) / output.name
+        npx = shutil.which("npx.cmd" if os.name == "nt" else "npx")
+        if npx is None:
+            raise OSError("npx is required to generate the built-in LVGL fonts")
         command = [
-            "npx",
+            npx,
             "--yes",
             "lv_font_conv@1.5.3",
             "--no-compress",

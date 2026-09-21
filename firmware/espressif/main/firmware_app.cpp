@@ -37,17 +37,17 @@ constexpr char kTag[] = "micropixel_main";
 constexpr char kAppStorePartition[] = "app_store";
 constexpr auto kAppStoreSubtype = static_cast<esp_partition_subtype_t>(0x40);
 
-// A board-soldered App storage medium belongs to MicroPixel alone, so foreign
-// content (typically the vendor's factory FAT image) or a BundleFS formatted
-// with another block size is formatted on first use: it only ever holds
-// downloaded Apps, which the Store can fetch again. Removable media are the
-// user's and are never formatted here. A damaged BundleFS is left untouched in
-// both cases; the AppStore reports the state and the System UI offers to
-// format it after the user confirms.
-void PrepareBoardAppStorage(runtime::BundleFs& store, bool removable) {
+// Dedicated, non-removable App storage belongs to MicroPixel alone, so an empty
+// medium, foreign content (typically a vendor factory FAT image), or BundleFS
+// with another block size is formatted on first use. It only holds downloaded
+// Apps, which the Store can fetch again. Removable media are the user's and are
+// never formatted here. A damaged BundleFS is left untouched in both cases;
+// the AppStore reports the state and the System UI offers to format it after
+// the user confirms.
+void PrepareOwnedAppStorage(runtime::BundleFs& store, const char* role, bool removable) {
     bundlefs_error_t error = store.Mount();
     if (!removable && (error == BUNDLEFS_ERR_NOT_FORMATTED || error == BUNDLEFS_ERR_UNSUPPORTED_FORMAT)) {
-        ESP_LOGW(kTag, "board App storage holds %s; formatting it for the App Store",
+        ESP_LOGW(kTag, "%s holds %s; formatting it for the App Store", role,
                  error == BUNDLEFS_ERR_NOT_FORMATTED ? "no BundleFS" : "a BundleFS with another geometry");
         error = store.Format();
         if (error == BUNDLEFS_OK) {
@@ -56,9 +56,8 @@ void PrepareBoardAppStorage(runtime::BundleFs& store, bool removable) {
     }
     if (error != BUNDLEFS_OK) {
         ESP_LOGE(kTag,
-                 "external App storage is not ready (BundleFS error %d); downloaded Apps use the NOR app_store until "
-                 "it is formatted from System Settings",
-                 static_cast<int>(error));
+                 "%s is not ready (BundleFS error %d)%s", role, static_cast<int>(error),
+                 removable ? "; format it from System Settings" : "");
     }
 }
 
@@ -139,6 +138,9 @@ void FirmwareApp::Run() {
     static MICROPIXEL_EXT_RAM_BSS platform::storage::PartitionBlockStorage nor_storage(kAppStorePartition,
                                                                                        kAppStoreSubtype);
     static MICROPIXEL_EXT_RAM_BSS runtime::BundleFs system_store(nor_storage);
+    if (nor_storage.present()) {
+        PrepareOwnedAppStorage(system_store, "NOR app_store", false);
+    }
     static runtime::BundleFs* external_store = nullptr;
     if (services.app_storage != nullptr) {
         static MICROPIXEL_EXT_RAM_BSS runtime::BundleFs board_store(*services.app_storage,
@@ -146,7 +148,7 @@ void FirmwareApp::Run() {
         if (board_store.data_block_size() == 0U) {
             ESP_LOGW(kTag, "board App storage geometry is unsupported; using the NOR app_store partition");
         } else {
-            PrepareBoardAppStorage(board_store, services.app_storage_removable);
+            PrepareOwnedAppStorage(board_store, "external App storage", services.app_storage_removable);
             external_store = &board_store;
             ESP_LOGI(kTag, "external App storage: %" PRIu64 " MiB, %" PRIu32 " KiB blocks%s",
                      services.app_storage->geometry().size_bytes / (1024U * 1024U),

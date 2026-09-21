@@ -21,6 +21,40 @@
     "flash": true,
     "monitor": true
   },
+  "esp32-p4-function-ev": {
+    "description": "ESP32-P4-Function-EV-Board display/touch, C6 Wi-Fi and USB local-control firmware",
+    "target": "esp32p4",
+    "chip_markers": [
+      "ESP32-P4"
+    ],
+    "build_dir": "build/host-esp32p4-function-ev",
+    "build_dir_env": "P4_FUNCTION_EV_HOST_BUILD_DIR",
+    "sdkconfig_name": "sdkconfig.release",
+    "sdkconfig_env": "P4_FUNCTION_EV_SDKCONFIG",
+    "sdkconfig_defaults": [
+      "firmware/espressif/sdkconfig.defaults",
+      "firmware/espressif/sdkconfig.p4.defaults",
+      "firmware/espressif/sdkconfig.p4-function-ev.defaults"
+    ],
+    "port_env": "P4_FUNCTION_EV_PORT",
+    "baud_env": "P4_FUNCTION_EV_BAUD",
+    "default_baud": 2000000,
+    "companion": {
+      "description": "ESP32-C6 ESP-Hosted slave firmware",
+      "project_dir": "firmware/espressif/managed_components/espressif__esp_hosted/slave",
+      "target": "esp32c6",
+      "build_dir": "build/esp-hosted-c6-slave",
+      "sdkconfig_name": "sdkconfig",
+      "sdkconfig_defaults": [
+        "firmware/espressif/managed_components/espressif__esp_hosted/slave/sdkconfig.defaults",
+        "firmware/espressif/managed_components/espressif__esp_hosted/slave/sdkconfig.defaults.esp32c6"
+      ],
+      "image": "network_adapter.bin"
+    },
+    "preview": false,
+    "flash": true,
+    "monitor": true
+  },
   "p4-null": {
     "description": "ESP32-P4 hardware-independent compile gate",
     "target": "esp32p4",

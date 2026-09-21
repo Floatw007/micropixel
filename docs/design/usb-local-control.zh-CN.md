@@ -1,7 +1,7 @@
 # USB 本地控制协议
 
-USB 本地控制是产品 Host 的开发能力。Metalio-Claw4 使用 ESP32 USB Serial/JTAG，ESP-Mosaico 使用板载
-USB 2.0 HS OTG 上的 TinyUSB CDC；两者向 `micropixel` CLI 提供设备状态与任务诊断、固件更新、App 管理、
+USB 本地控制是产品 Host 的开发能力。Metalio-Claw4 和 ESP32-P4-Function-EV-Board v1.5.x 使用 ESP32
+USB Serial/JTAG，ESP-Mosaico 使用板载 USB 2.0 HS OTG 上的 TinyUSB CDC；它们向 `micropixel` CLI 提供设备状态与任务诊断、固件更新、App 管理、
 Host/App 统一日志、最近错误、截图和输入注入，不新增 Guest ABI，也不允许原始 Flash、NVS 或任意 Host 函数访问。
 
 ## 1. 分层

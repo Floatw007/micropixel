@@ -1,6 +1,5 @@
 import argparse
 import contextlib
-import fcntl
 from dataclasses import replace
 import io
 import json
@@ -12,6 +11,11 @@ from unittest import mock
 
 from tools import firmware
 from tools.build_full_firmware_image import flash_size_bytes
+
+try:
+    import fcntl
+except ModuleNotFoundError:
+    fcntl = None
 
 
 class FlashSizeBytesTests(unittest.TestCase):
@@ -41,6 +45,7 @@ class FirmwareProfileTest(unittest.TestCase):
             set(self.profiles),
             {
                 "metalio-claw4",
+                "esp32-p4-function-ev",
                 "p4-null",
                 "esp-mosaico",
                 "s31-null",
@@ -51,6 +56,14 @@ class FirmwareProfileTest(unittest.TestCase):
             },
         )
         self.assertTrue(self.profiles["metalio-claw4"].flash)
+        self.assertTrue(self.profiles["esp32-p4-function-ev"].flash)
+        self.assertTrue(self.profiles["esp32-p4-function-ev"].monitor)
+        companion = self.profiles["esp32-p4-function-ev"].companion
+        self.assertIsNotNone(companion)
+        assert companion is not None
+        self.assertEqual(companion.target, "esp32c6")
+        self.assertEqual(companion.image.name, "network_adapter.bin")
+        self.assertIsNone(self.profiles["metalio-claw4"].companion)
         self.assertTrue(self.profiles["esp-mosaico"].flash)
         self.assertTrue(self.profiles["esp-mosaico"].monitor)
         self.assertEqual(self.profiles["esp-mosaico"].flash_before, "no-reset")
@@ -77,6 +90,39 @@ class FirmwareProfileTest(unittest.TestCase):
         self.assertIn("IDF_TARGET=esp32p4", command)
         defaults = next(item for item in command if item.startswith("SDKCONFIG_DEFAULTS="))
         self.assertIn("sdkconfig.p4.defaults", defaults)
+        self.assertEqual(command[-1], "build")
+
+    def test_configured_build_reuses_its_idf_python(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            build_dir = Path(directory)
+            python = build_dir / "idf-python.exe"
+            python.write_bytes(b"")
+            (build_dir / "CMakeCache.txt").write_text(
+                f"_Python3_EXECUTABLE:INTERNAL={python}\n", encoding="utf-8"
+            )
+            profile = replace(self.profiles["esp32-p4-function-ev"], build_dir=build_dir)
+            self.assertEqual(firmware.idf_python(profile, environ={}), python.resolve())
+
+    def test_windows_idf_launcher_resolves_to_active_idf_script(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            idf_path = Path(directory)
+            expected = idf_path / "tools" / "idf.py"
+            expected.parent.mkdir()
+            expected.write_bytes(b"")
+            with (
+                mock.patch.object(firmware.os, "name", "nt"),
+                mock.patch.object(firmware.shutil, "which", return_value="C:/tools/idf.py.exe"),
+            ):
+                self.assertEqual(
+                    firmware.locate_idf_py({"IDF_PATH": str(idf_path)}), expected.resolve()
+                )
+
+    def test_function_ev_companion_build_uses_c6_defaults(self) -> None:
+        profile = self.profiles["esp32-p4-function-ev"]
+        command = firmware.companion_idf_command(profile, Path("/idf/idf.py"), ("build",))
+        self.assertIn("IDF_TARGET=esp32c6", command)
+        defaults = next(item for item in command if item.startswith("SDKCONFIG_DEFAULTS="))
+        self.assertIn("sdkconfig.defaults.esp32c6", defaults)
         self.assertEqual(command[-1], "build")
 
     def test_p4_config_uses_target_lvgl_pool_for_fresh_and_existing_builds(self) -> None:
@@ -165,7 +211,7 @@ common_max_task_name_len=32
     def test_s31_command_uses_preview_and_composed_null_defaults(self) -> None:
         profile = self.profiles["s31-null"]
         command = firmware.idf_command(profile, Path("/idf/idf.py"), ("build",))
-        self.assertEqual(command[1], "--preview")
+        self.assertIn("--preview", command)
         self.assertIn("IDF_TARGET=esp32s31", command)
         defaults = next(item for item in command if item.startswith("SDKCONFIG_DEFAULTS="))
         self.assertIn("sdkconfig.s31.defaults", defaults)
@@ -346,6 +392,19 @@ common_max_task_name_len=32
         command = run.call_args.args[0]
         self.assertEqual(command[command.index("--before") + 1], "no-reset")
 
+    def test_missing_esptool_is_reported_as_environment_error(self) -> None:
+        profile = self.profiles["esp32-p4-function-ev"]
+        result = mock.Mock(
+            returncode=1,
+            stdout="D:/Anaconda/python.exe: No module named esptool",
+        )
+        with (
+            mock.patch.object(firmware, "idf_python", return_value=Path("D:/Anaconda/python.exe")),
+            mock.patch.object(firmware.subprocess, "run", return_value=result),
+        ):
+            with self.assertRaisesRegex(firmware.FirmwareToolError, "esptool is unavailable"):
+                firmware.probe_port(profile, "COM12")
+
     def test_rom_handoff_uses_usb_identity_without_opening_port(self) -> None:
         profile = self.profiles["esp-mosaico"]
         rom_info = firmware.SerialPortInfo(
@@ -399,6 +458,23 @@ common_max_task_name_len=32
         self.assertIn("--diff-with", command)
         self.assertIn("bootloader/bootloader_flashed.bin", command)
 
+    def test_companion_flash_allows_cross_chip_staging(self) -> None:
+        profile = self.profiles["esp32-p4-function-ev"]
+        result = mock.Mock(returncode=0)
+        with (
+            mock.patch.object(
+                firmware,
+                "_load_flash_manifest",
+                return_value=([], [("0x800000", "../esp-hosted-c6-slave/network_adapter.bin")],
+                              "hard-reset", True),
+            ),
+            mock.patch.object(firmware.subprocess, "run", return_value=result) as run,
+            mock.patch.object(Path, "is_file", return_value=False),
+        ):
+            firmware.run_esptool_flash(profile, "COM12", 2000000)
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("write-flash") + 1], "--force")
+
     def test_monitor_does_not_reset_or_probe_an_explicit_port(self) -> None:
         profile = self.profiles["metalio-claw4"]
         with tempfile.NamedTemporaryFile() as serial_port:
@@ -424,6 +500,23 @@ common_max_task_name_len=32
         with self.assertRaises(firmware.FirmwareToolError):
             firmware.ensure_action_allowed(self.profiles["s31-null"], args.action)
 
+    def test_flash_built_does_not_require_idf_py(self) -> None:
+        profile = self.profiles["esp32-p4-function-ev"]
+        with (
+            mock.patch.object(firmware, "load_profiles", return_value={profile.name: profile}),
+            mock.patch.object(firmware, "locate_idf_py") as locate,
+            mock.patch.object(firmware, "validate_profile_files"),
+            mock.patch.object(Path, "is_file", return_value=True),
+            mock.patch.object(firmware, "resolve_flash_port", return_value="COM12"),
+            mock.patch.object(firmware, "resolve_baud", return_value=460800),
+            mock.patch.object(firmware, "run_esptool_flash"),
+        ):
+            self.assertEqual(
+                firmware.main([profile.name, "flash-built", "--port", "COM12"]),
+                0,
+            )
+        locate.assert_not_called()
+
     def test_flash_baud_must_be_positive(self) -> None:
         with self.assertRaisesRegex(firmware.FirmwareToolError, "positive integer"):
             firmware.resolve_baud(self.profiles["metalio-claw4"], 0, environ={})
@@ -436,6 +529,7 @@ common_max_task_name_len=32
         self.assertIn("metalio-claw4", output.getvalue())
         self.assertIn("esp-mosaico", output.getvalue())
 
+    @unittest.skipIf(fcntl is None, "POSIX flock assertion")
     def test_shared_idf_lock_serializes_managed_component_mutations(self) -> None:
         profile = self.profiles["esp-mosaico"]
         with tempfile.TemporaryDirectory() as directory:
