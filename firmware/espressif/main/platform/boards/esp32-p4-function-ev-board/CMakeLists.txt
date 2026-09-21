@@ -1,6 +1,7 @@
 list(APPEND micropixel_sources
     "platform/boards/esp32-p4-function-ev-board/board_hardware.cpp"
     "platform/boards/esp32-p4-function-ev-board/display/display_pipeline.cpp"
+    "platform/boards/esp32-p4-function-ev-board/idle_frequency_telemetry.cpp"
     "platform/boards/esp32-p4-function-ev-board/platform.cpp"
     "platform/boards/esp32-p4-function-ev-board/presentation.cpp"
     "platform/input/esp_lcd_touch_input.cpp"

@@ -13,9 +13,12 @@
 | LVGL animation timer | LVGL 默认 4 ms | LVGL 内建动画 | 没有 animation 时由 LVGL 自身暂停；当前 Host 主要转场由 PPA/有限帧循环完成 |
 
 `esp_lv_adapter` 的 worker 按 `lv_timer_handler()` 返回的下一个 deadline 等待，最长兜底 120 s；等待还会被
-1 s auto-sleep deadline 约束，进入 idle pause 后无限阻塞，直到触摸 IRQ、Guest frame、Host UI 更新或其他
-显式 wake。GT911 IRQ 只唤醒输入读取任务；确认得到有效触摸样本后，Host 输入路径才唤醒 LVGL，避免空 IRQ
-造成 adapter 的 idle pause 反复退出。产品启用 ESP-IDF PM 和启动时 DFS：任务活跃时仍可运行在 360 MHz，空闲时降到 XTAL 频率。
+1 s auto-sleep deadline 约束，进入 idle pause 后无限阻塞，直到触摸、Guest frame、Host UI 更新或其他
+显式 wake。带 GT911 INT 的板型只在确认得到有效触摸样本后才唤醒 LVGL，避免空 IRQ 造成 adapter 的 idle pause
+反复退出；Function EV 的 LCD 子板没有连接 INT，改用 50 ms 空闲/10 ms 按下的自适应轮询。产品启用 ESP-IDF PM
+和启动时 DFS：任务活跃时仍可运行在 360 MHz，无最高频率 PM lock 的板型在空闲时可降到 XTAL 频率。
+Function EV 保持 MIPI-DPI 点亮时，ESP-IDF 6.1 的 `dsi_dpi` lock 会让 CPU 维持 360 MHz；第一阶段先减少
+周期唤醒并记录该基线，显示挂起/恢复和 lock 释放属于后续阶段。
 FreeRTOS tickless idle 已启用，所有可运行任务阻塞时可停止周期 tick；运行时 PM 未启用 automatic light sleep。
 
 ## 用户可配置的空闲休眠与关机
@@ -47,6 +50,7 @@ v2 Host settings record 保存在 `sys_store/system`；旧 v1 record 首次读�
 | Guest `TimerService` | 每 Session 最多 8 个，Guest 指定 one-shot/periodic | 将 Timer 到期转换成统一 Guest event | 保留。App suspend 时全部停止，periodic event 会合并，且设置 `skip_unhandled_events` |
 | Wi-Fi discovery | 1 个 one-shot | 用户扫描后 20 s holdoff；失败后按 60 s、120 s、300 s、900 s退避发现已保存网络 | 保留。它本身就是 deadline/event 模型，不是固定轮询，并设置 `skip_unhandled_events` |
 | USB Local Control | 1 个 one-shot，仅安装会话期间运行 | 120 s无安装数据后唤醒 `micropixel_usb`，在其所属任务中终止会话并返回超时 | 保留。每个有效 chunk 都重置 deadline，空闲且无安装会话时不运行 |
+| Function EV DFS 启动探针 | 3 个有限延迟，累计 5/15/30 s | 记录实际 CPU MHz 与 PM 配置 | 第三次采样后任务自删除；只用于第一阶段真机基线，不形成永久周期唤醒 |
 
 集成 Guest 的周期定时器只在对应 App 前台运行：Blocks 与 Snake 为 16,667 us（约 60 Hz），Demo Timer 页为
 100 ms，Demo atlas 页为 20 ms。它们负责游戏推进或演示，不影响 App Hall 空闲。

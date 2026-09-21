@@ -1,6 +1,7 @@
 #include "platform/input/esp_lcd_touch_input.hpp"
 
 #include <algorithm>
+#include <cinttypes>
 
 #include "device/contracts/input.hpp"
 #include "esp_log.h"
@@ -11,13 +12,13 @@ namespace micropixel::platform::input {
 namespace {
 
 constexpr char kTag[] = "micropixel_touch";
-constexpr uint64_t kPollingIntervalUs = 10000U;
 }  // namespace
 
 EspLcdTouchInput* EspLcdTouchInput::active_instance_ = nullptr;
 
-EspLcdTouchInput::EspLcdTouchInput(int32_t width, int32_t height, uint8_t max_touch_points)
-    : width_(width), height_(height), max_touch_points_(max_touch_points) {}
+EspLcdTouchInput::EspLcdTouchInput(int32_t width, int32_t height, uint8_t max_touch_points,
+                                   TouchPollingConfig polling)
+    : width_(width), height_(height), max_touch_points_(max_touch_points), polling_(polling) {}
 
 EspLcdTouchInput::~EspLcdTouchInput() {
     if (poll_timer_ != nullptr) {
@@ -31,6 +32,7 @@ EspLcdTouchInput::~EspLcdTouchInput() {
 
 esp_err_t EspLcdTouchInput::Initialize(esp_lcd_touch_handle_t touch, buses::I2cExecutor& executor) {
     if (touch == nullptr || width_ <= 0 || height_ <= 0 || max_touch_points_ == 0U ||
+        polling_.active_interval_us == 0U || polling_.idle_interval_us == 0U ||
         max_touch_points_ > micropixel::device::kMaxTouchPoints) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -63,10 +65,19 @@ esp_err_t EspLcdTouchInput::Start(lv_display_t* display) {
         timer_config.skip_unhandled_events = true;
         status = esp_timer_create(&timer_config, &poll_timer_);
         if (status == ESP_OK) {
-            status = esp_timer_start_periodic(poll_timer_, kPollingIntervalUs);
+            polling_interval_us_ = polling_.idle_interval_us;
+            status = esp_timer_start_periodic(poll_timer_, polling_interval_us_);
         }
         if (status == ESP_OK) {
-            ESP_LOGI(kTag, "touch controller has no interrupt line; polling every %llu us", kPollingIntervalUs);
+            if (polling_.active_interval_us == polling_.idle_interval_us) {
+                ESP_LOGI(kTag, "touch controller has no interrupt line; polling every %" PRIu64 " us",
+                         polling_interval_us_);
+            } else {
+                ESP_LOGI(kTag,
+                         "touch controller has no interrupt line; adaptive polling active=%" PRIu64
+                         " idle=%" PRIu64 " us",
+                         polling_.active_interval_us, polling_.idle_interval_us);
+            }
         }
     }
     if (status != ESP_OK) {
@@ -290,12 +301,33 @@ void EspLcdTouchInput::ProcessInterrupt() {
         }
     }
 
+    bool touch_active = false;
+    for (const auto& active : active_touches_) {
+        touch_active = touch_active || active.active;
+    }
+    UpdatePollingInterval(touch_active);
     work_pending_.store(false, std::memory_order_release);
     if (interrupts_.load(std::memory_order_acquire) != observed_interrupts) {
         if (!work_pending_.exchange(true, std::memory_order_acq_rel) &&
             !executor_->Post(buses::I2cExecutor::Priority::kHigh, ProcessEntry, this)) {
             work_pending_.store(false, std::memory_order_release);
         }
+    }
+}
+
+void EspLcdTouchInput::UpdatePollingInterval(bool touch_active) {
+    if (poll_timer_ == nullptr) {
+        return;
+    }
+    const uint64_t requested = touch_active ? polling_.active_interval_us : polling_.idle_interval_us;
+    if (requested == polling_interval_us_) {
+        return;
+    }
+    const esp_err_t status = esp_timer_restart(poll_timer_, requested);
+    if (status == ESP_OK) {
+        polling_interval_us_ = requested;
+    } else {
+        ESP_LOGW(kTag, "touch polling interval update failed: %s", esp_err_to_name(status));
     }
 }
 

@@ -41,7 +41,7 @@ list(APPEND micropixel_sources ${micropixel_builtin_font_sources})
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     set_source_files_properties(${micropixel_builtin_font_generated_sources} PROPERTIES GENERATED TRUE)
 endif()
-set(micropixel_requires 78__esp-http3 app_update cjson esp_app_format esp_netif esp_wifi mbedtls nvs_flash pthread)
+set(micropixel_requires 78__esp-http3 app_update cjson esp_app_format esp_netif esp_pm esp_wifi mbedtls nvs_flash pthread)
 
 include("${CMAKE_CURRENT_LIST_DIR}/host/CMakeLists.txt")
 include("${CMAKE_CURRENT_LIST_DIR}/work/CMakeLists.txt")

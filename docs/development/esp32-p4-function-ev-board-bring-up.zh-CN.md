@@ -16,7 +16,8 @@ ESP32-P4 USB Serial/JTAG 提供的 MPX1 本地控制。音频、摄像头与 SD 
 2. LCD 子板 `RST_LCD` 接主板 `GPIO27`。
 3. LCD 子板 `PWM` 接主板 `GPIO26`。
 4. LCD 子板通过 USB-C 供电，或把子板 `5V`、`GND` 接到主板对应电源；不要同时使用两种供电方式。
-5. GT911 使用板载 I²C1：SDA 为 GPIO7，SCL 为 GPIO8。该 LCD 子板未连接触摸 INT/RST，固件以 10 ms 周期轮询。
+5. GT911 使用板载 I²C1：SDA 为 GPIO7，SCL 为 GPIO8。该 LCD 子板未连接触摸 INT/RST，固件在空闲时以
+   50 ms 周期轮询，检测到按下后切换为 10 ms，全部释放后恢复 50 ms。
 6. C6 使用板载 SDIO，无需外接跳线：CLK GPIO18、CMD GPIO19、D0–D3 GPIO14–GPIO17、RESET GPIO54。
 7. USB 本地控制连接主板标注为 USB Serial/JTAG 的 Type-C 口；只供电的数据线不会枚举端口。
 
@@ -68,11 +69,31 @@ python tools/firmware.py esp32-p4-function-ev monitor --port COM8 --reset
 
 ```text
 initializing ESP32-P4-Function-EV-Board display and touch
-touch controller has no interrupt line; polling every 10000 us
+touch controller has no interrupt line; adaptive polling active=10000 idle=50000 us
+idle DFS sample 1/3: cpu=... MHz configured=40..360 MHz light-sleep=explicit-only
+idle DFS sampling complete; probe task is stopping
 ready: EK79007 1024x600 RGB888 + GT911 polled touch + ESP32-C6 Wi-Fi + USB local control
 ```
 
-显示应先亮起 MicroPixel Host 界面，启动亮度为 80%。触摸验收至少覆盖四角、短按、横向滑动、
+## 第一阶段空闲功耗
+
+Function EV profile 在 0.9.4 基线上启用三项第一阶段优化：
+
+- Display refresh timer 从持续 16 ms 改为 1000 ms 兜底；Host UI、Guest frame 和有效触摸仍通过
+  `RequestDisplayRefresh()` 立即唤醒，不以 1 秒为交互延迟。
+- `esp_lv_adapter` 在 1 秒无 LVGL 工作后进入 pause，最长普通等待为 120 秒；新的显示或输入事件会显式唤醒。
+- 无 INT 线的 GT911 使用 50 ms 空闲/10 ms 按下自适应轮询，减少大厅静置时的 I²C 与任务唤醒。
+
+启动后的 5、15、30 秒会各记录一次实际 CPU 频率和 DFS 配置，第三次后测量任务自删除，不形成永久
+周期唤醒。默认配置预期为 40–360 MHz、tickless idle 开启、automatic light sleep 关闭；实际采样频率
+用于发现仍持有 PM lock 的外设或任务，不能仅凭配置上下限判断已经降频。本阶段不关闭 MIPI-DSI、背光、
+ESP-Hosted 或 USB，也不启用 automatic light sleep，因此应把它视为唤醒频率/DFS 基线，而不是最终整机功耗。
+ESP-IDF 6.1 的 MIPI-DPI panel 驱动在面板存活期间持有 `ESP_PM_CPU_FREQ_MAX`（lock 名为
+`dsi_dpi`），所以保持显示点亮时三次采样均为 360 MHz 是当前已知基线；后续阶段必须通过受控的显示挂起/
+恢复流程释放该锁，不能从应用层强行释放驱动私有 PM lock。
+
+显示应先亮起 MicroPixel Host 界面，启动亮度为 80%。静置 1 秒后再首次触摸不应丢失按下，长按和连续滑动
+不应出现 50 ms 的阶梯感。触摸验收至少覆盖四角、短按、横向滑动、
 从底部上滑和从顶部下滑；坐标方向错误时不要修改公共输入层，应只调整本板
 `board_hardware.cpp` 中 GT911 的 `swap_xy`、`mirror_x`、`mirror_y`。
 

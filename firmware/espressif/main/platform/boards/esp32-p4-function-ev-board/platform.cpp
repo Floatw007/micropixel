@@ -7,6 +7,7 @@
 #include "esp_lv_adapter.h"
 #include "host/ui/lvgl/square_common/square_system_ui.hpp"
 #include "platform/adapters/graphics_adapter.hpp"
+#include "platform/boards/esp32-p4-function-ev-board/idle_frequency_telemetry.hpp"
 #include "platform/boards/esp32-p4-function-ev-board/platform_state.hpp"
 #include "platform/boards/esp32-p4-function-ev-board/presentation.hpp"
 #include "platform/controllers/brightness_curve.hpp"
@@ -32,9 +33,10 @@ esp_err_t InitializeLvgl(board_detail::BoardState& state) {
     adapter_config.task_core_id = task_policy::kSystemCore;
     adapter_config.tick_mode = ESP_LV_ADAPTER_TICK_MODE_MONOTONIC;
     adapter_config.task_min_delay_ms = portTICK_PERIOD_MS;
-    adapter_config.task_max_delay_ms = 1000U;
-    adapter_config.auto_sleep.enable = false;
-    adapter_config.auto_sleep.mode = ESP_LV_ADAPTER_AUTO_SLEEP_MODE_DISABLED;
+    adapter_config.task_max_delay_ms = board_detail::kLvglMaximumWaitMs;
+    adapter_config.auto_sleep.enable = true;
+    adapter_config.auto_sleep.mode = ESP_LV_ADAPTER_AUTO_SLEEP_MODE_PAUSE;
+    adapter_config.auto_sleep.idle_timeout_ms = board_detail::kLvglIdleTimeoutMs;
     ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter_config), board_detail::kTag, "initialize LVGL adapter failed");
 
     esp_lv_adapter_display_config_t display_config{};
@@ -59,7 +61,7 @@ esp_err_t InitializeLvgl(board_detail::BoardState& state) {
     ESP_RETURN_ON_ERROR(state.guest_graphics.Initialize(state.display, state.display_pipeline.DirectFramebuffers(),
                                                         state.display_pipeline.DirectScanout()),
                         board_detail::kTag, "initialize Guest graphics failed");
-    lv_timer_set_period(lv_display_get_refr_timer(state.display), 16U);
+    lv_timer_set_period(lv_display_get_refr_timer(state.display), board_detail::kRefreshPeriodMs);
 
     ESP_RETURN_ON_ERROR(esp_lv_adapter_lock(-1), board_detail::kTag, "lock LVGL failed");
     const esp_err_t ui_status = state.ui.InitializeLocked(state.display);
@@ -96,6 +98,12 @@ class Esp32P4FunctionEvBoard final : public Board {
                                 transports::DevelopmentCaptureHook::For(presentation_)),
                             board_detail::kTag, "start USB Serial/JTAG local control failed");
         ESP_RETURN_ON_ERROR(hardware_.SetBrightness(80U), board_detail::kTag, "set startup brightness failed");
+#if CONFIG_MICROPIXEL_FUNCTION_EV_IDLE_FREQUENCY_TELEMETRY
+        if (const esp_err_t telemetry_status = idle_frequency_telemetry_.Start(); telemetry_status != ESP_OK) {
+            ESP_LOGW(board_detail::kTag, "idle-frequency telemetry unavailable: %s",
+                     esp_err_to_name(telemetry_status));
+        }
+#endif
 
         BoardRegistration& registration = registration_.emplace(device::BoardInfo{
             .board = "ESP32-P4-Function-EV-Board",
@@ -145,6 +153,7 @@ class Esp32P4FunctionEvBoard final : public Board {
     adapters::GraphicsAdapter graphics_;
     wifi::EspHostedRadio wifi_radio_{"slave_fw"};
     wifi::WifiManager wifi_{wifi_radio_};
+    esp32_p4_function_ev_board::IdleFrequencyTelemetry idle_frequency_telemetry_{};
     board_detail::FunctionEvPresentation presentation_;
     host_ui::lvgl::square_common::SquareSystemUi system_ui_;
 };

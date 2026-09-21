@@ -14,12 +14,18 @@
 
 namespace micropixel::platform::input {
 
+struct TouchPollingConfig final {
+    uint64_t active_interval_us{10000U};
+    uint64_t idle_interval_us{10000U};
+};
+
 // Adapts an interrupt-capable esp_lcd_touch controller to the hardware-neutral
 // Input contract. The controller ISR only schedules fixed-capacity I2C
 // work; all bus access and Guest/Host event delivery runs on the executor task.
 class EspLcdTouchInput final : public device::Input {
    public:
-    EspLcdTouchInput(int32_t width, int32_t height, uint8_t max_touch_points);
+    EspLcdTouchInput(int32_t width, int32_t height, uint8_t max_touch_points,
+                     TouchPollingConfig polling = {});
     ~EspLcdTouchInput() override;
 
     [[nodiscard]] esp_err_t Initialize(esp_lcd_touch_handle_t touch, buses::I2cExecutor& executor);
@@ -39,6 +45,7 @@ class EspLcdTouchInput final : public device::Input {
 
     void Emit(const device::TouchSample& sample);
     void ProcessInterrupt();
+    void UpdatePollingInterval(bool touch_active);
     static esp_err_t PrimeEntry(void* context);
     static void IRAM_ATTR InterruptEntry(esp_lcd_touch_handle_t touch);
     static void PollTimerExpired(void* context);
@@ -49,6 +56,8 @@ class EspLcdTouchInput final : public device::Input {
     int32_t width_{};
     int32_t height_{};
     uint8_t max_touch_points_{};
+    TouchPollingConfig polling_{};
+    uint64_t polling_interval_us_{};
     esp_lcd_touch_handle_t touch_{};
     lv_display_t* display_{};
     buses::I2cExecutor* executor_{};

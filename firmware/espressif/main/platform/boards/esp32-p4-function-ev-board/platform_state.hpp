@@ -20,12 +20,19 @@ namespace ui_profile = host_ui::lvgl::square_common::profiles::landscape_1024x60
 inline constexpr char kTag[] = "p4_function_ev";
 inline constexpr int kWidth = board::kDisplayWidth;
 inline constexpr int kHeight = board::kDisplayHeight;
+inline constexpr uint32_t kRefreshPeriodMs = 1000U;
+inline constexpr uint32_t kLvglIdleTimeoutMs = 1000U;
+inline constexpr uint32_t kLvglMaximumWaitMs = 120U * 1000U;
+inline constexpr uint64_t kTouchActivePollingIntervalUs = 10000U;
+inline constexpr uint64_t kTouchIdlePollingIntervalUs = 50000U;
 static_assert(kWidth == ui_profile::Layout::kWidth);
 static_assert(kHeight == ui_profile::Layout::kHeight);
 
 struct InputState final {
     buses::I2cExecutor i2c_executor{};
-    input::EspLcdTouchInput touch_input{kWidth, kHeight, micropixel::device::kMaxTouchPoints};
+    input::EspLcdTouchInput touch_input{
+        kWidth, kHeight, micropixel::device::kMaxTouchPoints,
+        {.active_interval_us = kTouchActivePollingIntervalUs, .idle_interval_us = kTouchIdlePollingIntervalUs}};
 };
 
 struct BoardState final {

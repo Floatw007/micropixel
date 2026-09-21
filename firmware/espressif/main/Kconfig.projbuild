@@ -157,10 +157,19 @@ menu "MicroPixel board backends"
         help
             Bring up the official 7-inch EK79007 1024x600 MIPI-DSI display,
             PWM backlight and GT911 touch controller. The Function EV Board
-            has no wired GT911 interrupt, so touch is polled every 10 ms.
+            has no wired GT911 interrupt, so touch uses adaptive polling.
             Also publish the onboard ESP32-C6 over the official ESP-Hosted
             SDIO wiring and expose MPX1 local control through ESP32-P4 USB
             Serial/JTAG. Audio, camera and SD card remain outside this profile.
+
+    config MICROPIXEL_FUNCTION_EV_IDLE_FREQUENCY_TELEMETRY
+        bool "Sample ESP32-P4 Function EV idle CPU frequency after boot"
+        depends on MICROPIXEL_BOARD_ESP32_P4_FUNCTION_EV_BOARD
+        default y
+        help
+            Log three finite CPU-frequency samples at 5, 15 and 30 seconds
+            after boot, then delete the probe task. This verifies DFS without
+            adding a permanent periodic wake source.
 
     config MICROPIXEL_BOARD_ESP_MOSAICO
         bool "ESP-Mosaico"

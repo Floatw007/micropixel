@@ -80,8 +80,6 @@ inline constexpr HallSceneLayout kHallSceneLayout{
             .time_width = 72,
             .cellular = {.width = 22, .height = 16},
             .wifi_scale = 256U,
-            .battery_width = 30,
-            .battery_percent_width = 48,
         },
 };
 
