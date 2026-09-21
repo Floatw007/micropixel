@@ -124,6 +124,10 @@ codec/I2S output and the RGB565/QSPI presentation boundary. Codec control,
 battery and touch work are serialized through the board's shared I2C executor.
 Brightness uses the CO5300 component API instead of issuing panel registers
 from System UI.
+On Mosaico, panel initialization leaves scanout off. The Host creates and renders
+the startup screen before starting the LVGL worker; the subsequent CO5300
+DISPLAY_ON command drains queued SPI pixel transfers before enabling scanout.
+This keeps both the default LVGL light screen and unwritten panel GRAM hidden.
 
 BMI270 and both BMM150 devices use the pinned Bosch SensorAPI sources under
 `components/bosch_sensorapi/` and reusable drivers under `platform/drivers/sensors/`.
@@ -164,6 +168,26 @@ physical display name; `DeviceRegistry` owns enumeration and public IDs. GPIO
 names may follow the hardware manual (`P15`, `GPIO15`, `IO15`, and so on).
 Names are descriptive only: Peripheral routing uses the local Channel and Guest
 routing uses the upper-assigned opaque ID.
+
+Vector sensors share `platform/sensors/PolledVectorSensorPeripheral`. Each board
+owns a fixed array of channels (local ID, sensor kind, driver and timer name);
+the sampler borrows that storage and owns timer, queue and cache lifecycle.
+Drivers and the I2C executor outlive the sampler. Initialization and axis mapping
+remain board-specific; the inertial adapter initializes one shared IMU before
+binding its two vector channels. Start, Stop and destruction run on the owning
+task, outside the I2C worker, and drain queued sampling before reconfiguration or
+storage release. Read only copies the latest cache.
+
+Claw4 composes its drivers, channel storage and sampler in Board state and initializes
+them in the board startup path. BOX3 and CoreS3 compose their drivers and the shared
+inertial adapter directly in Board. Board-specific sensor wrappers are reserved for
+additional behavior, such as SZPI axis mapping or Mosaico asynchronous discovery;
+simple interface forwarding does not need another class or source file.
+
+Application GPIO uses `platform/gpio/EspGpioPeripheral`, configured with each
+board's pin whitelist. Its control object remains in internal SRAM for ISR
+access; board display and haptic PWM channels remain separate from the two
+application PWM slots (LEDC timers/channels 2 and 3).
 
 Before adding board-local code, check these homes:
 

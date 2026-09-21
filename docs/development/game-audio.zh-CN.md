@@ -6,8 +6,9 @@
 
 短促、程序化反馈使用 `Tone`/`sfx.json`；BGM、对白和较长的录制音效使用 Bundle `ogg_opus` asset。
 两条路径最终进入同一个 Host mixer 和系统主音量，不允许 Guest 自建 master volume。
-系统主音量使用对数曲线：0% 静音，1% 约为 −54 dB（量化后幅度 0.20%，对应此前 −60～0 dB 曲线的 10%），
-1%～100% 在 dB 域均匀递增，50% 约为 −27.3 dB，100% 为原始幅度。低音量试听需覆盖 1%、5%、10%，确认安静环境下的可用范围。
+系统主音量使用平方振幅曲线：`gain = (percent / 100)²`，0% 静音，100% 为原始幅度。
+1%、10%、50%、80%、90% 分别对应原始幅度的 0.01%、1%、25%、64%、81%；Host 以万分比整数精确表示增益。
+低音量试听需覆盖 1%、5%、10%，确认安静环境下的可用范围；同时覆盖 50%、80%、90%、100%，确认中高段调节手感。
 
 算法指标是工程代理，不是校准声压测量，也不能单独证明“听起来舒服”。自动门禁负责发现数字响度、
 尖锐度、瞬态和重复暴露回归，最终判断必须包含目标设备上的 A/B 试听。
@@ -21,12 +22,14 @@ guest/apps/<game>/
 ├── audio/
 │   ├── sfx.json       # 唯一音效参数源，必须提交
 │   └── README.md      # 游戏特有的层级选择、事件语义和试听说明
-└── <game>_audio.cpp   # 只消费生成的 ToneSpec，不硬编码音色参数
+└── <game>_audio.cpp   # 用 sdk/tone_sequencer.hpp 播放生成的 ToneSpec，不硬编码音色参数
 ```
 
 波形、频率、时长、`volume_per_mille`、Attack、Release 和音符 Delay 必须写在 `audio/sfx.json`。
 运行时代码不得另行维护同一组常量。允许运行时根据游戏状态选择 profile、改变 BGM 节拍或截取前缀，
-但音符本身仍来自生成的 `ToneSpec`。
+但音符本身仍来自生成的 `ToneSpec`（即 `micropixel::ToneSpec`）。延迟音符的排队与逐帧推进由 SDK 的
+`micropixel::ToneSequencer<N>` 负责：`Play(profile, gain)` 播放整段 profile，`Advance(delta)` 在帧定时器里
+推进，`StopAll()` 在暂停或结算时清空；游戏代码不得再自行维护 `ScheduledTone` 队列。
 
 生成的 `<game>_sfx_profiles.hpp`、分析报告和试听 WAV 都属于构建产物，写入 `build/apps/<game>/`，
 不得提交到源码目录。新游戏可从 [game-sfx.template.json](game-sfx.template.json) 开始。
@@ -176,6 +179,7 @@ python3 tools/analyze_sfx.py --manifest guest/apps/snake/audio/sfx.json \
 游戏内的参考事件、响度例外和重复频率由各自 `audio/sfx.json` 定义；不要在说明文档中复制数值。
 Snake 背景旋律的音符间隔由游戏等级控制，分析时的 delay 仅用于模拟暴露。
 
-游戏差异：Blocks 的落地参考声采用较高目标以改善设备可听度，移动和软降仍保持较低层级；
+游戏差异：Blocks 和 Jump Jump 的落地参考声采用较高目标以改善设备可听度；Blocks 的移动和软降仍保持较低层级，
+Jump Jump 的蓄力后半段仅轻度衰减，让升调持续可辨；
 Snake 用旋律长度区分启动、升级与失败，保持操作音优先于背景旋律；
 Tilt 的碰墙声使用短促反馈与 cooldown，避免连续接触造成重复噪声。

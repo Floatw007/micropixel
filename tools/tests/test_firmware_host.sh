@@ -67,14 +67,25 @@ for key in ('capabilities','services'):
 lines.append('static const struct { const char* current; const char* candidate; bool update; } fixture_versions[] = {'+','.join('{'+json.dumps(a)+','+json.dumps(b)+','+str(c).lower()+'}' for a,b,c in fixture['versions'])+'};')
 Path(sys.argv[2]).write_text('\n'.join(lines)+'\n')
 PYFIXTURE
+kv_test_defines=()
+while IFS= read -r definition; do
+    kv_test_defines+=("-D${definition}")
+done < <(sed -n '/^CONFIG_MICROPIXEL_KV_/p' "$workspace_root/firmware/espressif/sdkconfig.defaults")
+build_and_run private_storage \
+    "${kv_test_defines[@]}" \
+    "$workspace_root/tools/tests/test_private_storage.cpp" \
+    "$workspace_root/tools/tests/fake_nvs.cpp" \
+    "$workspace_root/firmware/espressif/main/runtime/services/storage_service.cpp" \
+    "$workspace_root/firmware/espressif/main/runtime/services/app_storage.cpp" \
+    "$workspace_root/firmware/espressif/main/platform/storage/network_settings_migration.cpp"
+
 build_and_run guest_failure_detail "$workspace_root/tools/tests/test_guest_failure_detail.cpp"
 build_and_run linear_memory_policy "$workspace_root/tools/tests/test_linear_memory_policy.cpp"
 
 build_and_run_c app_requirements -I "$test_output_dir" "$workspace_root/tools/tests/test_app_requirements.c"
 
 build_and_run maze_touch_controls \
-    "$workspace_root/tools/tests/test_maze_touch_controls.cpp" \
-    "$workspace_root/guest/apps/maze-evil/input/touch_controls.cpp"
+    "$workspace_root/tools/tests/test_maze_touch_controls.cpp"
 
 build_and_run ft6336_report \
     -I "$workspace_root/tools/tests/touch_stubs" \
@@ -82,6 +93,12 @@ build_and_run ft6336_report \
     "$workspace_root/firmware/espressif/main/platform/input/ft6336_report.cpp"
 
 build_and_run gravity_balls "$workspace_root/guest/apps/gravity-balls/src/physics_test.cpp"
+
+build_and_run jump_jump \
+    "$workspace_root/tools/tests/test_jump_jump.cpp" \
+    "$workspace_root/guest/apps/jump-jump/model.cpp" \
+    "$workspace_root/guest/apps/jump-jump/renderer.cpp" \
+    "$workspace_root/firmware/espressif/main/runtime/graphics/raster_kernels.cpp"
 
 build_and_run frame_timing \
     "$workspace_root/tools/tests/test_frame_timing.cpp"
@@ -138,6 +155,20 @@ build_and_run i2c_executor \
     "$workspace_root/tools/tests/test_i2c_executor.cpp" \
     "$workspace_root/firmware/espressif/main/platform/buses/i2c_executor.cpp"
 
+build_and_run polled_vector_sensor \
+    -iquote "$workspace_root/tools/tests/sensor_stubs" \
+    "$workspace_root/tools/tests/test_polled_vector_sensor.cpp" \
+    "$workspace_root/firmware/espressif/main/platform/sensors/polled_vector_sensor_peripheral.cpp" \
+    "$workspace_root/firmware/espressif/main/platform/sensors/polled_inertial_sensor_peripheral.cpp"
+
+build_and_run board_gpio \
+    -pthread \
+    -iquote "$workspace_root/tools/tests/gpio_stubs" \
+    "$workspace_root/tools/tests/test_board_gpio.cpp" \
+    "$workspace_root/firmware/espressif/main/device/device_registry.cpp" \
+    "$workspace_root/firmware/espressif/main/platform/gpio/esp_gpio_peripheral.cpp" \
+    "$workspace_root/firmware/espressif/main/platform/gpio/gpio_isr_service.cpp"
+
 build_and_run internal_ram \
     -DMICROPIXEL_TEST_INTERNAL_RAM \
     "$workspace_root/tools/tests/test_internal_ram.cpp"
@@ -176,6 +207,15 @@ build_and_run snake_gamekit \
     -I "$workspace_root/guest" \
     "$workspace_root/tools/tests/test_snake_gamekit.cpp"
 
+# Header-only SDK game helpers shared by the Guest apps.
+build_and_run sdk_helpers \
+    -I "$workspace_root/guest" \
+    "$workspace_root/tools/tests/test_sdk_helpers.cpp"
+
+build_and_run sdk_gamepad \
+    -I "$workspace_root/guest" \
+    "$workspace_root/tools/tests/test_sdk_gamepad.cpp"
+
 build_and_run mesh_renderer \
     -I "$workspace_root/guest" \
     "$workspace_root/tools/tests/test_mesh_renderer.cpp" \
@@ -195,6 +235,31 @@ build_and_run bitmap_store \
     -I "$workspace_root/guest" \
     "$workspace_root/tools/tests/test_bitmap_store.cpp" \
     "$workspace_root/firmware/espressif/main/runtime/resources/bitmap_store.cpp"
+
+# Exercise the pinned decoder with real PNG input and fault-injected PSRAM.
+# libpng supports C++ compilation; no system libpng installation is required.
+png_component="$workspace_root/firmware/espressif/managed_components/espressif__libpng"
+png_sources=()
+for source in png pngerror pngget pngmem pngpread pngread pngrio pngrtran pngrutil pngset pngtrans \
+    pngwio pngwrite pngwtran pngwutil; do
+    png_sources+=("$png_component/libpng/$source.c")
+done
+build_and_run bitmap_decoder \
+    -DMICROPIXEL_TEST_TRACK_HEAP -DPNG_ARM_NEON_OPT=0 -DPNG_INTEL_SSE_OPT=0 \
+    -Wno-unused-command-line-argument \
+    -fsanitize=address,undefined -g -O2 \
+    -I "$png_component" -I "$png_component/libpng" \
+    -I "$workspace_root/firmware/espressif/managed_components/espressif__esp_new_jpeg/include" \
+    "$workspace_root/tools/tests/test_bitmap_decoder.cpp" \
+    "$workspace_root/firmware/espressif/main/runtime/resources/bitmap_decoder.cpp" \
+    "$workspace_root/firmware/espressif/main/runtime/bundle/bundle_section_reader.cpp" \
+    -x c++ "${png_sources[@]}" -lz
+
+build_and_run spi_nand_block_storage \
+    -fsanitize=address,undefined -g -O2 \
+    -I "$workspace_root/tools/tests/nand_stubs" \
+    "$workspace_root/tools/tests/test_spi_nand_block_storage.cpp" \
+    "$workspace_root/firmware/espressif/main/platform/storage/spi_nand_block_storage.cpp"
 
 build_and_run pixel_compositor \
     "$workspace_root/tools/tests/test_pixel_compositor.cpp" \
@@ -274,6 +339,8 @@ build_and_run language_packs \
     "$workspace_root/tools/tests/test_language_packs.cpp" \
     "$workspace_root/firmware/espressif/main/host/fonts/language_packs.cpp" \
     "$workspace_root/firmware/espressif/main/runtime/bundle/app_store.cpp" \
+    "$workspace_root/firmware/espressif/main/runtime/services/app_storage.cpp" \
+    "$workspace_root/tools/tests/fake_nvs.cpp" \
     "$workspace_root/firmware/espressif/main/runtime/bundlefs/bundle_store_source.cpp" \
     -x c++ "$workspace_root/firmware/espressif/main/runtime/bundle/memory_bundle_source.c"
 
@@ -397,6 +464,8 @@ build_and_run device_catalog \
 app_store_sources=(
     "$workspace_root/tools/tests/test_app_store.cpp"
     "$workspace_root/firmware/espressif/main/runtime/bundle/app_store.cpp"
+    "$workspace_root/firmware/espressif/main/runtime/services/app_storage.cpp"
+    "$workspace_root/tools/tests/fake_nvs.cpp"
     "$workspace_root/firmware/espressif/main/runtime/bundlefs/bundle_store_source.cpp"
     -x c++ "$workspace_root/firmware/espressif/main/runtime/bundle/memory_bundle_source.c"
 )

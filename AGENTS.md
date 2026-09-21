@@ -33,7 +33,10 @@ Host paths below are relative to `firmware/espressif/main/`. Detailed design gui
 ## Boundaries
 
 - Guest SDK, apps, and ABI must not depend on ESP-IDF, LVGL, or board types, or introduce threads, mutexes,
-  system calls, or direct hardware access.
+ system calls, or direct hardware access.
+- Before adding a helper to a Guest app, check the [SDK capability catalog](guest/sdk/README.md#capability-catalog).
+ Apps must not re-implement catalogued capabilities (math, deterministic RNG, object pools, tone sequencing,
+ virtual gamepad, coordinate mapping); a helper that a second app needs moves into `guest/sdk/` with tests.
 - Keep SDK-to-wire conversion in Guest Runtime. Extend Service methods, channels, or events before adding
   Core imports. Never repurpose published IDs or expose C++ layouts, STL types, or Host pointers through the C ABI.
 - The Host validates pointers, lengths, handles, generations, ownership, and capacity independently of SDK checks.
@@ -80,6 +83,9 @@ Run Host tests only through `bash tools/tests/test_firmware_host.sh`, never by i
 Formatting: `bash tools/check_firmware_style.sh --format-only`. Before release or push, run checks relevant to the change and release targets.
 Use the board specified by the user or established by the current hardware task. Do not default to P4 or build
 unrelated boards. For S31 work, use `bash tools/s31.sh build-host` and, when requested, `flash-host`.
+Run relevant regressions once before release and record the result; rerun affected checks only when inputs change.
+Do not duplicate them in board build jobs, SDK publication, or ordinary PR CI. Cloud SDK regressions are manual;
+keep release artifact, installer lifecycle, source consistency, and checksum validation.
 See [Contributing](CONTRIBUTING.md) for additional checks.
 
 Activate ESP-IDF 6.1 via `export.sh` and configure WASI SDK and matching WAMRC before building.

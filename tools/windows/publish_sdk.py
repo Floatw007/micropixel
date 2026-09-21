@@ -70,10 +70,11 @@ GitHub's automatically generated Source code archives contain repository sources
 
 ## What's new
 
-- `ConfigureDisplay` lets apps choose their logical canvas and scaling mode explicitly, removing the SDK's fixed 720 baseline. Textures follow the display configuration by default.
-- DirectSurface adds coordinate conversion and texture-scale helpers using the same display configuration, while buffers retain pixel coordinates. Examples and migration documentation have been updated.
-- The Service ABI is unchanged, and existing Bundles retain their behavior. When rebuilding older apps designed for a 720 canvas, configure `kExpand` explicitly; use `kNative` explicitly for native-resolution assets.
-- Companion firmware 0.9.1 streams App installation into BundleFS. PNG images are still fully decoded before resizing, so these scaling APIs do not eliminate peak decode memory usage.
+- Gamepad buttons support customization, and default control bounds now follow the logical canvas.
+- Gamepad glyph, rim and fill opacity are controlled independently, with refined defaults for overlay visibility.
+- Updated examples include refined Tomb Explorer controls and improved Jump Jump sound and charge cues.
+- Companion firmware 0.9.4 reports private KV usage, clears private data on explicit uninstall, and defaults to 16 KiB per AppId and 4 KiB per value. Updating an installed App preserves its data; earlier Hosts retain their configured quotas.
+- Firmware 0.9.4 also updates app launch feedback, image loading, storage handling and device volume behavior. Existing installed Bundles remain installed during Host-only updates.
 
 ## Installation and compatibility
 
