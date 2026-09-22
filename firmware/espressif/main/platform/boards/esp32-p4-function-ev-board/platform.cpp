@@ -5,6 +5,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_lv_adapter.h"
+#include "esp_pm.h"
 #include "host/ui/lvgl/square_common/square_system_ui.hpp"
 #include "platform/adapters/graphics_adapter.hpp"
 #include "platform/boards/esp32-p4-function-ev-board/idle_frequency_telemetry.hpp"
@@ -24,6 +25,18 @@ namespace micropixel::platform {
 namespace {
 
 namespace board_detail = esp32_p4_function_ev_board::detail;
+
+esp_err_t EnableAutomaticLightSleep() {
+    esp_pm_config_t power_config{};
+    ESP_RETURN_ON_ERROR(esp_pm_get_configuration(&power_config), board_detail::kTag,
+                        "read power-management configuration failed");
+    power_config.light_sleep_enable = true;
+    ESP_RETURN_ON_ERROR(esp_pm_configure(&power_config), board_detail::kTag, "enable automatic light sleep failed");
+    ESP_LOGI(board_detail::kTag,
+             "automatic light sleep enabled: CPU=%d..%d MHz, USB connection protected by NO_LIGHT_SLEEP lock",
+             power_config.min_freq_mhz, power_config.max_freq_mhz);
+    return ESP_OK;
+}
 
 esp_err_t InitializeLvgl(board_detail::BoardState& state) {
     esp_lv_adapter_config_t adapter_config{};
@@ -87,6 +100,7 @@ class Esp32P4FunctionEvBoard final : public Board {
     [[nodiscard]] esp_err_t Initialize(BoardContext& context) override {
         ESP_RETURN_ON_FALSE(memory::IsInternalObject(*this), ESP_ERR_INVALID_STATE, board_detail::kTag,
                             "Board control objects must reside in internal RAM");
+        ESP_RETURN_ON_ERROR(EnableAutomaticLightSleep(), board_detail::kTag, "configure automatic light sleep failed");
         ESP_LOGI(board_detail::kTag, "initializing ESP32-P4-Function-EV-Board display and touch");
         ESP_RETURN_ON_ERROR(hardware_.Initialize(), board_detail::kTag, "initialize display/touch hardware failed");
         ESP_RETURN_ON_ERROR(state_.i2c_executor.Initialize(), board_detail::kTag, "start I2C executor failed");
@@ -111,7 +125,7 @@ class Esp32P4FunctionEvBoard final : public Board {
             .host_chip = "ESP32-P4",
             .firmware_target = "esp32-p4-function-ev",
             .wifi_coprocessor = "ESP32-C6 (ESP-Hosted SDIO)",
-            .touch_controller = "GT911 (10/50 ms adaptive polling)",
+            .touch_controller = "GT911 (10/50/100 ms adaptive polling)",
             .display =
                 {
                     .driver = "EK79007",

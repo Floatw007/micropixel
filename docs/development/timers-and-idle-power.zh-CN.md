@@ -15,13 +15,14 @@
 `esp_lv_adapter` 的 worker 按 `lv_timer_handler()` 返回的下一个 deadline 等待，最长兜底 120 s；等待还会被
 1 s auto-sleep deadline 约束，进入 idle pause 后无限阻塞，直到触摸、Guest frame、Host UI 更新或其他
 显式 wake。带 GT911 INT 的板型只在确认得到有效触摸样本后才唤醒 LVGL，避免空 IRQ 造成 adapter 的 idle pause
-反复退出；Function EV 的 LCD 子板没有连接 INT，改用 50 ms 空闲/10 ms 按下的自适应轮询。产品启用 ESP-IDF PM
+反复退出；Function EV 的 LCD 子板没有连接 INT，改用 50 ms 空闲/10 ms 按下/100 ms 显示挂起的自适应轮询。产品启用 ESP-IDF PM
 和启动时 DFS：任务活跃时仍可运行在 360 MHz，无最高频率 PM lock 的板型在空闲时可降到 XTAL 频率。
 Function EV 保持 MIPI-DPI 点亮时，ESP-IDF 6.1 的 `dsi_dpi` lock 会让 CPU 维持 360 MHz。连续 30 秒没有
 前台显示活动后，板级控制器暂停并脱离 LVGL、删除 DPI panel/DBI IO/DSI bus，驱动释放该 lock，CPU 空闲时可降到
 40 MHz。触摸、USB 截图/输入和可见 Host/Guest 更新会受控重建 panel；30 秒状态栏兜底为 passive refresh，
 挂起后不唤醒显示。
-FreeRTOS tickless idle 已启用，所有可运行任务阻塞时可停止周期 tick；运行时 PM 未启用 automatic light sleep。
+FreeRTOS tickless idle 已启用，所有可运行任务阻塞时可停止周期 tick。Function EV 在运行时启用 automatic light
+sleep；USB Serial/JTAG 主机连接期间由 IDF 的 `usb_serial_jtag` `NO_LIGHT_SLEEP` 锁保护，只在脱离 USB 后允许实际入睡。
 
 ## 用户可配置的空闲休眠与关机
 
@@ -84,13 +85,14 @@ v2 Host settings record 保存在 `sys_store/system`；旧 v1 record 首次读�
 Remote control stream 的服务端心跳用于连接保活，不等于设备状态上报，也不触发日志采集。
 日志正文仅响应 `logs.read` 命令；状态快照不携带日志。状态刷新复用现有事件唤醒，不新增周期轮询任务。
 
-当前启用 FreeRTOS tickless idle，但不启用 automatic light sleep。显式 light sleep 由 Host 电源状态机编排，
-不能用空闲 scheduler 自行进入。若未来启用 automatic light sleep，Metalio-Claw4 必须验证 MIPI-DSI、PPA、
-PSRAM、ESP-Hosted SDIO、GT911 与电源键的 retention/wake；ESP-Mosaico 必须单独验证 QSPI/CO5300、native Wi-Fi、
-CST9217、PSRAM、POWER switch 与 USB CDC 重枚举。两个 profile 的验收不能互相替代。
+Function EV 启用 FreeRTOS tickless idle，并在板级初始化时启用受 USB 连接保护的 automatic light sleep。
+Metalio-Claw4 的显式 light sleep 仍由 Host 电源状态机编排，不能用空闲 scheduler 自行替代。
+若未来为其他板启用 automatic light sleep，Metalio-Claw4 必须验证 MIPI-DSI、PPA、PSRAM、ESP-Hosted SDIO、
+GT911 与电源键的 retention/wake；ESP-Mosaico 必须单独验证 QSPI/CO5300、native Wi-Fi、CST9217、PSRAM、POWER
+switch 与 USB CDC 重枚举。各 profile 的验收不能互相替代。
 
 当前产品基线已将 `CONFIG_FREERTOS_HZ` 设为 1000，以获得 1 ms 的阻塞和 deadline 粒度，并启用
-`CONFIG_FREERTOS_USE_TICKLESS_IDLE`；这不会代替 LVGL 独立的帧率限制，也不会自动启用 light sleep。后续启用 automatic light sleep 时，
+`CONFIG_FREERTOS_USE_TICKLESS_IDLE`；这不会代替 LVGL 独立的帧率限制，也不会自动为所有板启用 light sleep。验收 Function EV automatic light sleep 时，
 仍需要把 LVGL 动画显示提交独立限制在约 16–20 ms（50–60 FPS），避免 4 ms animation timer 实际触发
 约 250 次/秒的无效刷新。验收必须包含活动态 Tick ISR/CPU 开销、大厅待机功耗、ESP-Hosted SDIO 抖动，
 以及显式 light sleep 的进入和唤醒稳定性。

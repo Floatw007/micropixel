@@ -15,6 +15,12 @@ CONFIG_MICROPIXEL_FUNCTION_EV_IDLE_FREQUENCY_TELEMETRY=y
 CONFIG_MICROPIXEL_FUNCTION_EV_DISPLAY_IDLE_TIMEOUT_MS=30000
 CONFIG_PM_PROFILING=y
 
+# Automatic light sleep is enabled at runtime by the Function EV board after
+# its clocks and wake timers are ready. USB Serial/JTAG cannot survive light
+# sleep on ESP32-P4, so keep the IDF connection-monitor lock held whenever a
+# host is attached; untethered operation may then enter light sleep safely.
+CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION=y
+
 # Use the board's official ESP32-C6 ESP-Hosted SDIO wiring. The component's
 # FUNC_BOARD preset selects SDIO1, 4-bit/40 MHz, CLK18, CMD19, D0..D3 14..17
 # and active-high coprocessor reset on GPIO54.

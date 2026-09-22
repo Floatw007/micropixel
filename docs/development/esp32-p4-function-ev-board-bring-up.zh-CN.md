@@ -17,7 +17,7 @@ ESP32-P4 USB Serial/JTAG 提供的 MPX1 本地控制。音频、摄像头与 SD 
 3. LCD 子板 `PWM` 接主板 `GPIO26`。
 4. LCD 子板通过 USB-C 供电，或把子板 `5V`、`GND` 接到主板对应电源；不要同时使用两种供电方式。
 5. GT911 使用板载 I²C1：SDA 为 GPIO7，SCL 为 GPIO8。该 LCD 子板未连接触摸 INT/RST，固件在空闲时以
-   50 ms 周期轮询，检测到按下后切换为 10 ms，全部释放后恢复 50 ms。
+   50 ms 周期轮询，检测到按下后切换为 10 ms；显示挂起后使用 100 ms 低功耗周期。
 6. C6 使用板载 SDIO，无需外接跳线：CLK GPIO18、CMD GPIO19、D0–D3 GPIO14–GPIO17、RESET GPIO54。
 7. USB 本地控制连接主板标注为 USB Serial/JTAG 的 Type-C 口；只供电的数据线不会枚举端口。
 
@@ -71,7 +71,8 @@ python tools/firmware.py esp32-p4-function-ev monitor --port COM8 --reset
 initializing ESP32-P4-Function-EV-Board display and touch
 touch controller has no interrupt line; adaptive polling active=10000 idle=50000 us
 controlled MIPI-DPI suspend armed after 30000 ms of foreground inactivity
-idle DFS checkpoint 1/3: configured=40..360 MHz light-sleep=explicit-only
+automatic light sleep enabled: CPU=40..360 MHz, USB connection protected by NO_LIGHT_SLEEP lock
+idle DFS checkpoint 1/3: configured=40..360 MHz light-sleep=automatic
 MIPI-DPI panel detached in ... ms; dsi_dpi frequency lock released
 idle DFS sampling complete; probe task is stopping
 ready: EK79007 1024x600 RGB888 + GT911 polled touch + ESP32-C6 Wi-Fi + USB local control
@@ -96,12 +97,13 @@ Function EV profile 在 0.9.4 基线上启用以下空闲优化：
   30 秒计时。
 
 启动后的 5、15、40 秒会各记录一次 DFS 检查点，第三次输出 ESP-IDF PM lock 与 CPU 频率驻留统计，随后测量
-任务自删除，不形成永久周期唤醒。默认配置预期为 40–360 MHz、tickless idle 开启、automatic light sleep
-关闭。运行中的探针任务本身会持有 `rtos0` 最高频率锁，所以不能用任务内的瞬时读数判断空闲频率；应查看
+任务自删除，不形成永久周期唤醒。默认配置预期为 40–360 MHz、tickless idle 和 automatic light sleep
+开启。运行中的探针任务本身会持有 `rtos0` 最高频率锁，所以不能用任务内的瞬时读数判断空闲频率；应查看
 `Mode stats` 中 40 MHz 档位的累计驻留时间。DPI panel 活跃时，ESP-IDF 的 `dsi_dpi` CPU 最高频率锁会阻止
 40 MHz 驻留；若启动后没有前台活动，30 秒受控挂起会释放该锁，第三个检查点应显示非零的 40 MHz 驻留。
-ESP-Hosted SDIO、USB 和 GT911 轮询仍保持工作，automatic light sleep 仍关闭，因此这是显示域、C6 modem-sleep
-与 DFS 的第一阶段节能，不等于整机深度休眠。
+ESP32-P4 USB Serial/JTAG 不能跨 Light Sleep 保持正常工作，因此 USB 主机连接时，IDF connection monitor 会持有
+`usb_serial_jtag` `NO_LIGHT_SLEEP` 锁；此时 `light_sleep_counts=0` 是预期结果。断开 USB 后才允许真正进入 automatic
+light sleep，且仍需使用独立供电/测量通道验证 ESP-Hosted SDIO、GT911 和唤醒长稳。这不等于 P4/C6 协同深度休眠。
 
 显示应先亮起 MicroPixel Host 界面，启动亮度为 80%。静置 30 秒后背光应关闭；首次触摸应先恢复完整画面并
 继续传递该次按下。长按和连续滑动
