@@ -90,18 +90,19 @@ class Esp32P4FunctionEvBoard final : public Board {
         ESP_LOGI(board_detail::kTag, "initializing ESP32-P4-Function-EV-Board display and touch");
         ESP_RETURN_ON_ERROR(hardware_.Initialize(), board_detail::kTag, "initialize display/touch hardware failed");
         ESP_RETURN_ON_ERROR(state_.i2c_executor.Initialize(), board_detail::kTag, "start I2C executor failed");
-        ESP_RETURN_ON_ERROR(state_.touch_input.Initialize(hardware_.Touch(), state_.i2c_executor),
-                            board_detail::kTag, "bind GT911 touch failed");
+        ESP_RETURN_ON_ERROR(state_.touch_input.Initialize(hardware_.Touch(), state_.i2c_executor), board_detail::kTag,
+                            "bind GT911 touch failed");
         ESP_RETURN_ON_ERROR(InitializeLvgl(state_), board_detail::kTag, "initialize display pipeline failed");
-        ESP_RETURN_ON_ERROR(state_.development_display.Start(
-                                state_.touch_input, state_.local_control, board_detail::kWidth, board_detail::kHeight,
-                                transports::DevelopmentCaptureHook::For(presentation_)),
-                            board_detail::kTag, "start USB Serial/JTAG local control failed");
         ESP_RETURN_ON_ERROR(hardware_.SetBrightness(80U), board_detail::kTag, "set startup brightness failed");
+        ESP_RETURN_ON_ERROR(state_.display_idle.Start(state_.display, state_.touch_input), board_detail::kTag,
+                            "start controlled MIPI-DPI suspend failed");
+        ESP_RETURN_ON_ERROR(state_.development_display.Start(state_.touch_input, state_.local_control,
+                                                             board_detail::kWidth, board_detail::kHeight,
+                                                             transports::DevelopmentCaptureHook::For(presentation_)),
+                            board_detail::kTag, "start USB Serial/JTAG local control failed");
 #if CONFIG_MICROPIXEL_FUNCTION_EV_IDLE_FREQUENCY_TELEMETRY
         if (const esp_err_t telemetry_status = idle_frequency_telemetry_.Start(); telemetry_status != ESP_OK) {
-            ESP_LOGW(board_detail::kTag, "idle-frequency telemetry unavailable: %s",
-                     esp_err_to_name(telemetry_status));
+            ESP_LOGW(board_detail::kTag, "idle-frequency telemetry unavailable: %s", esp_err_to_name(telemetry_status));
         }
 #endif
 
@@ -110,7 +111,7 @@ class Esp32P4FunctionEvBoard final : public Board {
             .host_chip = "ESP32-P4",
             .firmware_target = "esp32-p4-function-ev",
             .wifi_coprocessor = "ESP32-C6 (ESP-Hosted SDIO)",
-            .touch_controller = "GT911 (10 ms polling)",
+            .touch_controller = "GT911 (10/50 ms adaptive polling)",
             .display =
                 {
                     .driver = "EK79007",

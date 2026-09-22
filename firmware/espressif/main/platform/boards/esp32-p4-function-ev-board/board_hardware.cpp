@@ -84,24 +84,43 @@ esp_err_t BoardHardware::InitializeI2cAndTouch() {
 }
 
 esp_err_t BoardHardware::InitializeDisplay() {
-    esp_ldo_channel_config_t ldo_config{};
-    ldo_config.chan_id = board::kDsiLdoChannel;
-    ldo_config.voltage_mv = board::kDsiLdoMillivolts;
-    ESP_RETURN_ON_ERROR(esp_ldo_acquire_channel(&ldo_config, &dsi_ldo_), kTag, "enable MIPI DSI PHY power failed");
+    if (panel_ != nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (dsi_ldo_ == nullptr) {
+        esp_ldo_channel_config_t ldo_config{};
+        ldo_config.chan_id = board::kDsiLdoChannel;
+        ldo_config.voltage_mv = board::kDsiLdoMillivolts;
+        ESP_RETURN_ON_ERROR(esp_ldo_acquire_channel(&ldo_config, &dsi_ldo_), kTag, "enable MIPI DSI PHY power failed");
+    }
 
-    esp_lcd_dsi_bus_config_t bus_config{};
-    bus_config.bus_id = 0;
-    bus_config.num_data_lanes = board::kDsiLaneCount;
-    bus_config.phy_clk_src = MIPI_DSI_PHY_CLK_SRC_DEFAULT;
-    bus_config.lane_bit_rate_mbps = board::kDsiLaneBitRateMbps;
-    ESP_RETURN_ON_ERROR(esp_lcd_new_dsi_bus(&bus_config, &dsi_bus_), kTag, "create MIPI DSI bus failed");
+    bool created_bus = false;
+    if (dsi_bus_ == nullptr) {
+        esp_lcd_dsi_bus_config_t bus_config{};
+        bus_config.bus_id = 0;
+        bus_config.num_data_lanes = board::kDsiLaneCount;
+        bus_config.phy_clk_src = MIPI_DSI_PHY_CLK_SRC_DEFAULT;
+        bus_config.lane_bit_rate_mbps = board::kDsiLaneBitRateMbps;
+        ESP_RETURN_ON_ERROR(esp_lcd_new_dsi_bus(&bus_config, &dsi_bus_), kTag, "create MIPI DSI bus failed");
+        created_bus = true;
+    }
 
-    esp_lcd_dbi_io_config_t dbi_config{};
-    dbi_config.virtual_channel = 0;
-    dbi_config.lcd_cmd_bits = 8;
-    dbi_config.lcd_param_bits = 8;
-    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_dbi(dsi_bus_, &dbi_config, &panel_io_), kTag,
-                        "create MIPI DBI control IO failed");
+    bool created_panel_io = false;
+    if (panel_io_ == nullptr) {
+        esp_lcd_dbi_io_config_t dbi_config{};
+        dbi_config.virtual_channel = 0;
+        dbi_config.lcd_cmd_bits = 8;
+        dbi_config.lcd_param_bits = 8;
+        const esp_err_t io_status = esp_lcd_new_panel_io_dbi(dsi_bus_, &dbi_config, &panel_io_);
+        if (io_status != ESP_OK) {
+            if (created_bus) {
+                (void)esp_lcd_del_dsi_bus(dsi_bus_);
+                dsi_bus_ = nullptr;
+            }
+            return io_status;
+        }
+        created_panel_io = true;
+    }
 
     // Keep this timing in sync with EK79007_1024_600_PANEL_60HZ_CONFIG_CF.
     // An explicit initialization also covers the ESP-IDF 6.1 output-format and
@@ -130,15 +149,38 @@ esp_err_t BoardHardware::InitializeDisplay() {
     panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB;
     panel_config.reset_gpio_num = board::kDisplayReset;
     panel_config.vendor_config = &vendor_config;
-    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_ek79007(panel_io_, &panel_config, &panel_), kTag,
-                        "create EK79007 panel failed");
-    ESP_RETURN_ON_ERROR(esp_lcd_dpi_panel_enable_dma2d(panel_), kTag, "enable DPI DMA2D failed");
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(panel_), kTag, "reset EK79007 failed");
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panel_), kTag, "initialize EK79007 failed");
-    return ESP_OK;
+    esp_err_t status = esp_lcd_new_panel_ek79007(panel_io_, &panel_config, &panel_);
+    if (status != ESP_OK) {
+        if (created_panel_io) {
+            (void)esp_lcd_panel_io_del(panel_io_);
+            panel_io_ = nullptr;
+        }
+        if (created_bus) {
+            (void)esp_lcd_del_dsi_bus(dsi_bus_);
+            dsi_bus_ = nullptr;
+        }
+        return status;
+    }
+    status = esp_lcd_dpi_panel_enable_dma2d(panel_);
+    if (status == ESP_OK) {
+        panel_dma2d_enabled_ = true;
+        status = esp_lcd_panel_reset(panel_);
+    }
+    if (status == ESP_OK) {
+        status = esp_lcd_panel_init(panel_);
+    }
+    if (status != ESP_OK) {
+        (void)SuspendDisplay();
+    }
+    return status;
 }
 
 esp_err_t BoardHardware::SetBrightness(uint8_t percent) {
+    brightness_percent_ = static_cast<uint8_t>(std::min<uint32_t>(percent, 100U));
+    return ApplyBrightness(brightness_percent_);
+}
+
+esp_err_t BoardHardware::ApplyBrightness(uint8_t percent) {
     if (!backlight_ready_) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -151,10 +193,64 @@ esp_err_t BoardHardware::SetBrightness(uint8_t percent) {
 
 esp_err_t BoardHardware::SetDisplayEnabled(bool enabled) {
     ESP_RETURN_ON_FALSE(panel_ != nullptr, ESP_ERR_INVALID_STATE, kTag, "display is not initialized");
-    if (!enabled) {
-        ESP_RETURN_ON_ERROR(SetBrightness(0U), kTag, "turn backlight off failed");
-    }
-    return esp_lcd_panel_disp_on_off(panel_, enabled);
+    return enabled ? RestoreBrightness() : ApplyBrightness(0U);
 }
+
+esp_err_t BoardHardware::SuspendDisplay() {
+    esp_err_t status = ApplyBrightness(0U);
+    if (panel_ != nullptr) {
+        if (panel_dma2d_enabled_) {
+            const esp_err_t dma2d_status = esp_lcd_dpi_panel_disable_dma2d(panel_);
+            if (dma2d_status == ESP_OK) {
+                panel_dma2d_enabled_ = false;
+            }
+            if (status == ESP_OK) {
+                status = dma2d_status;
+            }
+        }
+        if (!panel_dma2d_enabled_) {
+            const esp_err_t delete_status = esp_lcd_panel_del(panel_);
+            if (delete_status == ESP_OK) {
+                panel_ = nullptr;
+            }
+            if (status == ESP_OK) {
+                status = delete_status;
+            }
+        }
+    }
+    if (panel_ == nullptr && panel_io_ != nullptr) {
+        const esp_err_t delete_status = esp_lcd_panel_io_del(panel_io_);
+        if (delete_status == ESP_OK) {
+            panel_io_ = nullptr;
+        }
+        if (status == ESP_OK) {
+            status = delete_status;
+        }
+    }
+    if (panel_ == nullptr && panel_io_ == nullptr && dsi_bus_ != nullptr) {
+        const esp_err_t delete_status = esp_lcd_del_dsi_bus(dsi_bus_);
+        if (delete_status == ESP_OK) {
+            dsi_bus_ = nullptr;
+        }
+        if (status == ESP_OK) {
+            status = delete_status;
+        }
+    }
+    return status;
+}
+
+esp_err_t BoardHardware::ResumeDisplay() {
+    ESP_RETURN_ON_ERROR(ApplyBrightness(0U), kTag, "hold backlight off during display resume failed");
+    if (panel_ == nullptr) {
+        return InitializeDisplay();
+    }
+    if (!panel_dma2d_enabled_) {
+        ESP_RETURN_ON_ERROR(esp_lcd_dpi_panel_enable_dma2d(panel_), kTag, "re-enable DPI DMA2D failed");
+        panel_dma2d_enabled_ = true;
+    }
+    return ESP_OK;
+}
+
+esp_err_t BoardHardware::RestoreBrightness() { return ApplyBrightness(brightness_percent_); }
 
 }  // namespace micropixel::platform::esp32_p4_function_ev_board

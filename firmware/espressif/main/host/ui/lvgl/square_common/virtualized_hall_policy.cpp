@@ -613,7 +613,7 @@ void VirtualizedHallPolicy::UpdateStatusBar(const host_ui::HallStatusBarModel& m
     state_.hall_scene_ui.UpdateStatusBarLocked(model);
     state_.hall_status_bar = model;
     state_.hall_status_bar_valid = true;
-    platform::lvgl::RequestDisplayRefresh(state_.display);
+    platform::lvgl::RequestPassiveDisplayRefresh(state_.display);
     esp_lv_adapter_unlock();
 }
 

@@ -18,6 +18,7 @@ list(APPEND micropixel_sources
     "platform/lvgl/guest_graphics_engine.cpp"
     "platform/lvgl/guest_graphics_operations.cpp"
     "platform/lvgl/lvgl_software_pixel_compositor.cpp"
+    "platform/lvgl/lvgl_wakeup.cpp"
 )
 
 # P4 and S31 expose PPA/DMA2D; S3 is CPU-only. Derive this source set from the

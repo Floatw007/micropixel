@@ -11,6 +11,9 @@
 namespace micropixel::platform::esp32_p4_function_ev_board::detail {
 
 std::expected<host_ui::ScreenCapture, host_ui::SystemUiError> FunctionEvPresentation::CaptureScreenJpeg() {
+    if (!state_.display_idle.EnsureAwake()) {
+        return std::unexpected(host_ui::SystemUiError::kUnavailable);
+    }
     // Select the displayed member of the double-DPI framebuffer pair while
     // LVGL cannot swap buffers. CaptureScreenJpeg() takes the same recursive
     // adapter lock while copying the frame, then encodes after releasing it.
@@ -20,12 +23,11 @@ std::expected<host_ui::ScreenCapture, host_ui::SystemUiError> FunctionEvPresenta
     auto* framebuffers = state_.display_pipeline.DirectFramebuffers();
     const uint8_t* displayed = framebuffers != nullptr ? framebuffers->Displayed() : nullptr;
     static constexpr bool kReady = true;
-    auto result = lvgl::CaptureScreenJpeg(
-        state_.display, static_cast<uint32_t>(kWidth), static_cast<uint32_t>(kHeight),
-        {.pixels = displayed,
-         .stride = static_cast<uint32_t>(kWidth) * 3U,
-         .format = lvgl::DisplayCapturePixelFormat::kRgb888,
-         .ready = displayed != nullptr ? &kReady : nullptr});
+    auto result = lvgl::CaptureScreenJpeg(state_.display, static_cast<uint32_t>(kWidth), static_cast<uint32_t>(kHeight),
+                                          {.pixels = displayed,
+                                           .stride = static_cast<uint32_t>(kWidth) * 3U,
+                                           .format = lvgl::DisplayCapturePixelFormat::kRgb888,
+                                           .ready = displayed != nullptr ? &kReady : nullptr});
     esp_lv_adapter_unlock();
     return result;
 }

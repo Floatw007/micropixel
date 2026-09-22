@@ -24,8 +24,9 @@ struct TouchPollingConfig final {
 // work; all bus access and Guest/Host event delivery runs on the executor task.
 class EspLcdTouchInput final : public device::Input {
    public:
-    EspLcdTouchInput(int32_t width, int32_t height, uint8_t max_touch_points,
-                     TouchPollingConfig polling = {});
+    using DispatchGate = bool (*)(void* context, const device::TouchSample& sample);
+
+    EspLcdTouchInput(int32_t width, int32_t height, uint8_t max_touch_points, TouchPollingConfig polling = {});
     ~EspLcdTouchInput() override;
 
     [[nodiscard]] esp_err_t Initialize(esp_lcd_touch_handle_t touch, buses::I2cExecutor& executor);
@@ -36,6 +37,7 @@ class EspLcdTouchInput final : public device::Input {
     void BindTouchSink(device::TouchSink sink, void* context) override;
     void UnbindTouchSink(void* context) override;
     [[nodiscard]] bool InjectTouch(const device::TouchSample& sample) override;
+    void BindDispatchGate(DispatchGate gate, void* context);
 
    private:
     struct ActiveTouch final {
@@ -67,6 +69,8 @@ class EspLcdTouchInput final : public device::Input {
     portMUX_TYPE sink_lock_ = portMUX_INITIALIZER_UNLOCKED;
     device::TouchSink sink_{};
     void* sink_context_{};
+    DispatchGate dispatch_gate_{};
+    void* dispatch_gate_context_{};
     uint32_t sink_inflight_{};
     ActiveTouch active_touches_[micropixel::device::kMaxTouchPoints]{};
 };

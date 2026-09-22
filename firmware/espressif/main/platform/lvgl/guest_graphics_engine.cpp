@@ -541,7 +541,7 @@ void GuestGraphicsEngine::PublishSurface(uint8_t surface, bool visual_changed) {
         // paused waiting for an invalidation.
         lv_timer_ready(publish_timer_);
     }
-    (void)esp_lv_adapter_request_wake();
+    RequestDisplayRefresh(display_);
 }
 
 void GuestGraphicsEngine::ClearPendingFrame() {
@@ -1271,6 +1271,7 @@ int32_t GuestGraphicsEngine::CreateDirectSurface(const device::DirectSurfaceConf
 }
 
 int32_t GuestGraphicsEngine::PresentDirectSurface(const device::DirectSurfacePresentation& presentation) {
+    (void)ReportDisplayActivity(display_);
     return direct_surface_presenter_.Present(presentation);
 }
 
@@ -1370,7 +1371,7 @@ void GuestGraphicsEngine::PublishDirectSurface(uint8_t surface) {
     if (publish_timer_ != nullptr) {
         lv_timer_ready(publish_timer_);
     }
-    (void)esp_lv_adapter_request_wake();
+    RequestDisplayRefresh(display_);
 }
 
 bool GuestGraphicsEngine::AcquireAppSurfaceFrame(void* context, bool pending_only, AppSurfaceFrame& frame_out) {
@@ -1456,7 +1457,7 @@ void GuestGraphicsEngine::AppSurfaceFrameHandedToLvgl(void* context, bool panel_
     if (engine->publish_timer_ != nullptr) {
         lv_timer_ready(engine->publish_timer_);
     }
-    (void)esp_lv_adapter_request_wake();
+    RequestDisplayRefresh(engine->display_);
 }
 
 bool GuestGraphicsEngine::CompositeDirectFrame(void* context, const device::DirectSurfacePresentation& frame,

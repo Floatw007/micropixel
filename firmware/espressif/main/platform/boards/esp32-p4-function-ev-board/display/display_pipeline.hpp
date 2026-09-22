@@ -15,6 +15,8 @@ class FunctionEvDisplayPipeline final : public lvgl::DisplayPipeline {
         : hardware_(hardware), geometry_{width, height, 3U} {}
 
     void BindLvgl(lv_display_t* display);
+    void RebindPanel();
+    [[nodiscard]] esp_err_t RestoreBrightness() { return hardware_.RestoreBrightness(); }
 
     [[nodiscard]] lvgl::DisplayGeometry Geometry() const override { return geometry_; }
     [[nodiscard]] lvgl::DisplayCapabilities Capabilities() const override;
@@ -51,6 +53,7 @@ class FunctionEvDisplayPipeline final : public lvgl::DisplayPipeline {
     };
 
     BoardHardware& hardware_;
+    lv_display_t* display_{};
     lvgl::DisplayGeometry geometry_{};
     DpiFramebuffers framebuffers_{};
 };

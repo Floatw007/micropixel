@@ -42,6 +42,17 @@ uint8_t* FunctionEvDisplayPipeline::DpiFramebuffers::AcquireFree() {
 
 uint8_t* FunctionEvDisplayPipeline::DpiFramebuffers::Displayed() {
     uint8_t* free = AcquireFree();
+    if (free == nullptr && display_ != nullptr) {
+        // Outside dummy-draw mode LVGL's active buffer is the next buffer it
+        // will render into. After a direct-mode flush the adapter has already
+        // switched the panel to the other member of the pair. This matters
+        // immediately after panel recreation, when the new free buffer is
+        // intentionally still black.
+        const lv_draw_buf_t* active = lv_display_get_buf_active(display_);
+        if (active != nullptr && Contains(static_cast<const uint8_t*>(active->data))) {
+            free = static_cast<uint8_t*>(active->data);
+        }
+    }
     if (free == buffers_[0]) {
         return buffers_[1];
     }
@@ -57,8 +68,11 @@ esp_err_t FunctionEvDisplayPipeline::DpiFramebuffers::Submit(uint8_t* buffer) {
 }
 
 void FunctionEvDisplayPipeline::BindLvgl(lv_display_t* display) {
-    framebuffers_.Bind(display, hardware_.Panel());
+    display_ = display;
+    RebindPanel();
 }
+
+void FunctionEvDisplayPipeline::RebindPanel() { framebuffers_.Bind(display_, hardware_.Panel()); }
 
 lvgl::DisplayCapabilities FunctionEvDisplayPipeline::Capabilities() const {
     return {.partial_flush = true,
@@ -71,15 +85,21 @@ lvgl::DisplayCapabilities FunctionEvDisplayPipeline::Capabilities() const {
 
 esp_err_t FunctionEvDisplayPipeline::Suspend() {
     framebuffers_.Bind(nullptr, nullptr);
-    return hardware_.SetDisplayEnabled(false);
+    return hardware_.SuspendDisplay();
 }
 
-esp_err_t FunctionEvDisplayPipeline::Resume() { return hardware_.SetDisplayEnabled(true); }
+esp_err_t FunctionEvDisplayPipeline::Resume() {
+    const esp_err_t status = hardware_.ResumeDisplay();
+    if (status == ESP_OK) {
+        RebindPanel();
+    }
+    return status;
+}
 
 esp_err_t FunctionEvDisplayPipeline::SetBrightness(uint32_t per_ten_thousand) {
-    const uint32_t bounded =
-        per_ten_thousand <= controllers::kBrightnessControlScale ? per_ten_thousand
-                                                                 : controllers::kBrightnessControlScale;
+    const uint32_t bounded = per_ten_thousand <= controllers::kBrightnessControlScale
+                                 ? per_ten_thousand
+                                 : controllers::kBrightnessControlScale;
     const uint8_t percent = static_cast<uint8_t>((bounded * 100U + controllers::kBrightnessControlScale / 2U) /
                                                  controllers::kBrightnessControlScale);
     return hardware_.SetBrightness(percent);

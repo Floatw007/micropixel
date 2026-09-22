@@ -6,6 +6,7 @@
 #include "platform/boards/esp32-p4-function-ev-board/board_config.hpp"
 #include "platform/boards/esp32-p4-function-ev-board/board_hardware.hpp"
 #include "platform/boards/esp32-p4-function-ev-board/display/display_pipeline.hpp"
+#include "platform/boards/esp32-p4-function-ev-board/display_idle_controller.hpp"
 #include "platform/buses/i2c_executor.hpp"
 #include "platform/input/esp_lcd_touch_input.hpp"
 #include "platform/lvgl/fonts/font_registry.hpp"
@@ -31,7 +32,9 @@ static_assert(kHeight == ui_profile::Layout::kHeight);
 struct InputState final {
     buses::I2cExecutor i2c_executor{};
     input::EspLcdTouchInput touch_input{
-        kWidth, kHeight, micropixel::device::kMaxTouchPoints,
+        kWidth,
+        kHeight,
+        micropixel::device::kMaxTouchPoints,
         {.active_interval_us = kTouchActivePollingIntervalUs, .idle_interval_us = kTouchIdlePollingIntervalUs}};
 };
 
@@ -49,6 +52,7 @@ struct BoardState final {
     lv_display_t* display{};
     lvgl::FontRegistry fonts{};
     lvgl::GuestGraphicsEngine guest_graphics{kWidth, kHeight, fonts};
+    FunctionEvDisplayIdleController display_idle{display_pipeline, guest_graphics};
     host_ui::lvgl::square_common::StaticStatusLayerTransition status_transition{};
     host_ui::lvgl::square_common::SquareSystemUiState ui{touch_input, guest_graphics, status_transition,
                                                          ui_profile::kSystemUiProfile};

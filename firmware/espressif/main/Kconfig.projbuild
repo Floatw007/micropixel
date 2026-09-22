@@ -163,13 +163,25 @@ menu "MicroPixel board backends"
             Serial/JTAG. Audio, camera and SD card remain outside this profile.
 
     config MICROPIXEL_FUNCTION_EV_IDLE_FREQUENCY_TELEMETRY
-        bool "Sample ESP32-P4 Function EV idle CPU frequency after boot"
+        bool "Measure ESP32-P4 Function EV idle CPU-frequency residency"
         depends on MICROPIXEL_BOARD_ESP32_P4_FUNCTION_EV_BOARD
         default y
         help
-            Log three finite CPU-frequency samples at 5, 15 and 30 seconds
-            after boot, then delete the probe task. This verifies DFS without
-            adding a permanent periodic wake source.
+            Log finite DFS checkpoints at 5, 15 and 40 seconds after boot,
+            then dump the ESP-IDF PM lock and frequency-residency statistics
+            before deleting the probe task. This verifies DFS without adding
+            a permanent periodic wake source.
+
+    config MICROPIXEL_FUNCTION_EV_DISPLAY_IDLE_TIMEOUT_MS
+        int "Function EV controlled display suspend timeout (ms)"
+        depends on MICROPIXEL_BOARD_ESP32_P4_FUNCTION_EV_BOARD
+        range 5000 600000
+        default 30000
+        help
+            After this much foreground display inactivity, detach LVGL and
+            delete the MIPI-DPI panel, DBI IO and DSI bus. This releases the
+            ESP-IDF dsi_dpi CPU-frequency lock. Touch, USB control and visible
+            UI/Guest updates rebuild the display before they are delivered.
 
     config MICROPIXEL_BOARD_ESP_MOSAICO
         bool "ESP-Mosaico"

@@ -70,29 +70,39 @@ python tools/firmware.py esp32-p4-function-ev monitor --port COM8 --reset
 ```text
 initializing ESP32-P4-Function-EV-Board display and touch
 touch controller has no interrupt line; adaptive polling active=10000 idle=50000 us
-idle DFS sample 1/3: cpu=... MHz configured=40..360 MHz light-sleep=explicit-only
+controlled MIPI-DPI suspend armed after 30000 ms of foreground inactivity
+idle DFS checkpoint 1/3: configured=40..360 MHz light-sleep=explicit-only
+MIPI-DPI panel detached in ... ms; dsi_dpi frequency lock released
 idle DFS sampling complete; probe task is stopping
 ready: EK79007 1024x600 RGB888 + GT911 polled touch + ESP32-C6 Wi-Fi + USB local control
 ```
 
 ## 第一阶段空闲功耗
 
-Function EV profile 在 0.9.4 基线上启用三项第一阶段优化：
+Function EV profile 在 0.9.4 基线上启用以下空闲优化：
 
 - Display refresh timer 从持续 16 ms 改为 1000 ms 兜底；Host UI、Guest frame 和有效触摸仍通过
   `RequestDisplayRefresh()` 立即唤醒，不以 1 秒为交互延迟。
 - `esp_lv_adapter` 在 1 秒无 LVGL 工作后进入 pause，最长普通等待为 120 秒；新的显示或输入事件会显式唤醒。
 - 无 INT 线的 GT911 使用 50 ms 空闲/10 ms 按下自适应轮询，减少大厅静置时的 I²C 与任务唤醒。
+- 30 秒无前台显示活动后，板级任务先退出 Direct Surface 独占扫描，再通过
+  `esp_lv_adapter_sleep_prepare()` 等待 flush 并脱离 panel，关闭背光和 EK79007，停用 DMA2D，依次删除
+  DPI panel、DBI IO 与 DSI bus。`esp_lcd_panel_del()` 由驱动释放私有 `dsi_dpi` 最高频率锁。
+- 有效 GT911 样本、USB 注入触摸、截图以及 Host/Guest 可见更新会请求恢复。恢复路径重新创建 bus/IO/panel，
+  重新绑定 LVGL framebuffer，先完成一次全屏刷新，再恢复用户亮度；触摸分发在此期间等待，因此首次按下不会丢失。
+- 大厅时钟/电量兜底属于 passive refresh：显示工作时照常更新，显示已挂起时只更新模型，不唤醒面板，也不重置
+  30 秒计时。
 
-启动后的 5、15、30 秒会各记录一次实际 CPU 频率和 DFS 配置，第三次后测量任务自删除，不形成永久
-周期唤醒。默认配置预期为 40–360 MHz、tickless idle 开启、automatic light sleep 关闭；实际采样频率
-用于发现仍持有 PM lock 的外设或任务，不能仅凭配置上下限判断已经降频。本阶段不关闭 MIPI-DSI、背光、
-ESP-Hosted 或 USB，也不启用 automatic light sleep，因此应把它视为唤醒频率/DFS 基线，而不是最终整机功耗。
-ESP-IDF 6.1 的 MIPI-DPI panel 驱动在面板存活期间持有 `ESP_PM_CPU_FREQ_MAX`（lock 名为
-`dsi_dpi`），所以保持显示点亮时三次采样均为 360 MHz 是当前已知基线；后续阶段必须通过受控的显示挂起/
-恢复流程释放该锁，不能从应用层强行释放驱动私有 PM lock。
+启动后的 5、15、40 秒会各记录一次 DFS 检查点，第三次输出 ESP-IDF PM lock 与 CPU 频率驻留统计，随后测量
+任务自删除，不形成永久周期唤醒。默认配置预期为 40–360 MHz、tickless idle 开启、automatic light sleep
+关闭。运行中的探针任务本身会持有 `rtos0` 最高频率锁，所以不能用任务内的瞬时读数判断空闲频率；应查看
+`Mode stats` 中 40 MHz 档位的累计驻留时间。DPI panel 活跃时，ESP-IDF 的 `dsi_dpi` CPU 最高频率锁会阻止
+40 MHz 驻留；若启动后没有前台活动，30 秒受控挂起会释放该锁，第三个检查点应显示非零的 40 MHz 驻留。
+ESP-Hosted、USB 和
+GT911 轮询仍保持工作，automatic light sleep 仍关闭，因此这是显示域与 DFS 的第一阶段节能，不等于整机深度休眠。
 
-显示应先亮起 MicroPixel Host 界面，启动亮度为 80%。静置 1 秒后再首次触摸不应丢失按下，长按和连续滑动
+显示应先亮起 MicroPixel Host 界面，启动亮度为 80%。静置 30 秒后背光应关闭；首次触摸应先恢复完整画面并
+继续传递该次按下。长按和连续滑动
 不应出现 50 ms 的阶梯感。触摸验收至少覆盖四角、短按、横向滑动、
 从底部上滑和从顶部下滑；坐标方向错误时不要修改公共输入层，应只调整本板
 `board_hardware.cpp` 中 GT911 的 `swap_xy`、`mirror_x`、`mirror_y`。

@@ -16,8 +16,7 @@ constexpr char kTag[] = "micropixel_touch";
 
 EspLcdTouchInput* EspLcdTouchInput::active_instance_ = nullptr;
 
-EspLcdTouchInput::EspLcdTouchInput(int32_t width, int32_t height, uint8_t max_touch_points,
-                                   TouchPollingConfig polling)
+EspLcdTouchInput::EspLcdTouchInput(int32_t width, int32_t height, uint8_t max_touch_points, TouchPollingConfig polling)
     : width_(width), height_(height), max_touch_points_(max_touch_points), polling_(polling) {}
 
 EspLcdTouchInput::~EspLcdTouchInput() {
@@ -74,8 +73,8 @@ esp_err_t EspLcdTouchInput::Start(lv_display_t* display) {
                          polling_interval_us_);
             } else {
                 ESP_LOGI(kTag,
-                         "touch controller has no interrupt line; adaptive polling active=%" PRIu64
-                         " idle=%" PRIu64 " us",
+                         "touch controller has no interrupt line; adaptive polling active=%" PRIu64 " idle=%" PRIu64
+                         " us",
                          polling_.active_interval_us, polling_.idle_interval_us);
             }
         }
@@ -151,6 +150,13 @@ void EspLcdTouchInput::UnbindTouchSink(void* context) {
     }
 }
 
+void EspLcdTouchInput::BindDispatchGate(DispatchGate gate, void* context) {
+    portENTER_CRITICAL(&sink_lock_);
+    dispatch_gate_ = gate;
+    dispatch_gate_context_ = context;
+    portEXIT_CRITICAL(&sink_lock_);
+}
+
 bool EspLcdTouchInput::InjectTouch(const device::TouchSample& sample) {
     if (!Available() || sample.x < 0 || sample.y < 0 || sample.x >= width_ || sample.y >= height_ ||
         sample.pressure_per_mille > 1000U) {
@@ -163,17 +169,23 @@ bool EspLcdTouchInput::InjectTouch(const device::TouchSample& sample) {
 void EspLcdTouchInput::Emit(const device::TouchSample& sample) {
     device::TouchSink sink = nullptr;
     void* context = nullptr;
+    DispatchGate gate = nullptr;
+    void* gate_context = nullptr;
     portENTER_CRITICAL(&sink_lock_);
     if (sink_ != nullptr) {
         sink = sink_;
         context = sink_context_;
+        gate = dispatch_gate_;
+        gate_context = dispatch_gate_context_;
         ++sink_inflight_;
     }
     portEXIT_CRITICAL(&sink_lock_);
     if (sink == nullptr) {
         return;
     }
-    (void)sink(context, sample);
+    if (gate == nullptr || gate(gate_context, sample)) {
+        (void)sink(context, sample);
+    }
     portENTER_CRITICAL(&sink_lock_);
     --sink_inflight_;
     portEXIT_CRITICAL(&sink_lock_);

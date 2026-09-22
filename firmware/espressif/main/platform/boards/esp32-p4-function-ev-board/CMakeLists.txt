@@ -1,5 +1,6 @@
 list(APPEND micropixel_sources
     "platform/boards/esp32-p4-function-ev-board/board_hardware.cpp"
+    "platform/boards/esp32-p4-function-ev-board/display_idle_controller.cpp"
     "platform/boards/esp32-p4-function-ev-board/display/display_pipeline.cpp"
     "platform/boards/esp32-p4-function-ev-board/idle_frequency_telemetry.cpp"
     "platform/boards/esp32-p4-function-ev-board/platform.cpp"
