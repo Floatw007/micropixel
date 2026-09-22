@@ -49,6 +49,7 @@ class FunctionEvDisplayIdleController final {
     FunctionEvDisplayPipeline& pipeline_;
     lvgl::GuestGraphicsEngine& guest_graphics_;
     lv_display_t* display_{};
+    input::EspLcdTouchInput* touch_input_{};
     TaskHandle_t task_{};
     std::atomic<State> state_{State::kActive};
     std::atomic<int64_t> last_activity_us_{};

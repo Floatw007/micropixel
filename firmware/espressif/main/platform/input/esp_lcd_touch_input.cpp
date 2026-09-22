@@ -31,7 +31,7 @@ EspLcdTouchInput::~EspLcdTouchInput() {
 
 esp_err_t EspLcdTouchInput::Initialize(esp_lcd_touch_handle_t touch, buses::I2cExecutor& executor) {
     if (touch == nullptr || width_ <= 0 || height_ <= 0 || max_touch_points_ == 0U ||
-        polling_.active_interval_us == 0U || polling_.idle_interval_us == 0U ||
+        polling_.active_interval_us == 0U || polling_.idle_interval_us == 0U || polling_.low_power_interval_us == 0U ||
         max_touch_points_ > micropixel::device::kMaxTouchPoints) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -68,14 +68,15 @@ esp_err_t EspLcdTouchInput::Start(lv_display_t* display) {
             status = esp_timer_start_periodic(poll_timer_, polling_interval_us_);
         }
         if (status == ESP_OK) {
-            if (polling_.active_interval_us == polling_.idle_interval_us) {
+            if (polling_.active_interval_us == polling_.idle_interval_us &&
+                polling_.idle_interval_us == polling_.low_power_interval_us) {
                 ESP_LOGI(kTag, "touch controller has no interrupt line; polling every %" PRIu64 " us",
                          polling_interval_us_);
             } else {
                 ESP_LOGI(kTag,
                          "touch controller has no interrupt line; adaptive polling active=%" PRIu64 " idle=%" PRIu64
-                         " us",
-                         polling_.active_interval_us, polling_.idle_interval_us);
+                         " low_power=%" PRIu64 " us",
+                         polling_.active_interval_us, polling_.idle_interval_us, polling_.low_power_interval_us);
             }
         }
     }
@@ -155,6 +156,10 @@ void EspLcdTouchInput::BindDispatchGate(DispatchGate gate, void* context) {
     dispatch_gate_ = gate;
     dispatch_gate_context_ = context;
     portEXIT_CRITICAL(&sink_lock_);
+}
+
+void EspLcdTouchInput::SetLowPowerPolling(bool enabled) {
+    low_power_polling_.store(enabled, std::memory_order_release);
 }
 
 bool EspLcdTouchInput::InjectTouch(const device::TouchSample& sample) {
@@ -331,7 +336,10 @@ void EspLcdTouchInput::UpdatePollingInterval(bool touch_active) {
     if (poll_timer_ == nullptr) {
         return;
     }
-    const uint64_t requested = touch_active ? polling_.active_interval_us : polling_.idle_interval_us;
+    const uint64_t requested =
+        touch_active ? polling_.active_interval_us
+                     : (low_power_polling_.load(std::memory_order_acquire) ? polling_.low_power_interval_us
+                                                                           : polling_.idle_interval_us);
     if (requested == polling_interval_us_) {
         return;
     }

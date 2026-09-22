@@ -17,6 +17,7 @@ namespace micropixel::platform::input {
 struct TouchPollingConfig final {
     uint64_t active_interval_us{10000U};
     uint64_t idle_interval_us{10000U};
+    uint64_t low_power_interval_us{10000U};
 };
 
 // Adapts an interrupt-capable esp_lcd_touch controller to the hardware-neutral
@@ -38,6 +39,7 @@ class EspLcdTouchInput final : public device::Input {
     void UnbindTouchSink(void* context) override;
     [[nodiscard]] bool InjectTouch(const device::TouchSample& sample) override;
     void BindDispatchGate(DispatchGate gate, void* context);
+    void SetLowPowerPolling(bool enabled);
 
    private:
     struct ActiveTouch final {
@@ -60,6 +62,7 @@ class EspLcdTouchInput final : public device::Input {
     uint8_t max_touch_points_{};
     TouchPollingConfig polling_{};
     uint64_t polling_interval_us_{};
+    std::atomic<bool> low_power_polling_{};
     esp_lcd_touch_handle_t touch_{};
     lv_display_t* display_{};
     buses::I2cExecutor* executor_{};

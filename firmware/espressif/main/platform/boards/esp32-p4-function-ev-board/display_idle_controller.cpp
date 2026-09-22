@@ -24,18 +24,21 @@ esp_err_t FunctionEvDisplayIdleController::Start(lv_display_t* display, input::E
         return ESP_ERR_INVALID_ARG;
     }
     display_ = display;
+    touch_input_ = &touch_input;
     last_activity_us_.store(esp_timer_get_time(), std::memory_order_release);
     const BaseType_t created = xTaskCreatePinnedToCore(TaskEntry, "display_idle", kTaskStackBytes, this,
                                                        tskIDLE_PRIORITY + 1U, &task_, task_policy::kSystemCore);
     if (created != pdPASS) {
         task_ = nullptr;
         display_ = nullptr;
+        touch_input_ = nullptr;
         return ESP_ERR_NO_MEM;
     }
     if (!lvgl::BindDisplayActivityHook(ActivityHook, this)) {
         vTaskDelete(task_);
         task_ = nullptr;
         display_ = nullptr;
+        touch_input_ = nullptr;
         return ESP_ERR_INVALID_STATE;
     }
     touch_input.BindDispatchGate(TouchGate, this);
@@ -45,6 +48,9 @@ esp_err_t FunctionEvDisplayIdleController::Start(lv_display_t* display, input::E
 }
 
 void FunctionEvDisplayIdleController::RecordForegroundActivity() {
+    if (touch_input_ != nullptr) {
+        touch_input_->SetLowPowerPolling(false);
+    }
     last_activity_us_.store(esp_timer_get_time(), std::memory_order_release);
     if (state_.load(std::memory_order_acquire) != State::kActive) {
         wake_requested_.store(true, std::memory_order_release);
@@ -151,6 +157,7 @@ void FunctionEvDisplayIdleController::AttemptSuspend() {
     }
     if (wake_requested_.load(std::memory_order_acquire)) {
         if (!RecoverPreparedDisplay(false)) {
+            touch_input_->SetLowPowerPolling(true);
             state_.store(State::kSuspended, std::memory_order_release);
         }
         return;
@@ -161,11 +168,13 @@ void FunctionEvDisplayIdleController::AttemptSuspend() {
     if (suspend_status != ESP_OK) {
         ESP_LOGE(kTag, "MIPI-DPI shutdown failed: %s", esp_err_to_name(suspend_status));
         if (!RecoverPreparedDisplay(true)) {
+            touch_input_->SetLowPowerPolling(true);
             state_.store(State::kSuspended, std::memory_order_release);
             wake_requested_.store(true, std::memory_order_release);
         }
         return;
     }
+    touch_input_->SetLowPowerPolling(true);
     state_.store(State::kSuspended, std::memory_order_release);
     ESP_LOGI(kTag, "MIPI-DPI panel detached in %" PRIi64 " ms; dsi_dpi frequency lock released",
              (esp_timer_get_time() - suspend_started_us) / 1000);
@@ -175,9 +184,11 @@ void FunctionEvDisplayIdleController::AttemptSuspend() {
 }
 
 void FunctionEvDisplayIdleController::AttemptResume() {
+    touch_input_->SetLowPowerPolling(false);
     state_.store(State::kResuming, std::memory_order_release);
     if (!RecoverPreparedDisplay(true)) {
         (void)pipeline_.Suspend();
+        touch_input_->SetLowPowerPolling(true);
         state_.store(State::kSuspended, std::memory_order_release);
         vTaskDelay(pdMS_TO_TICKS(kResumeRetryDelayMs));
     }

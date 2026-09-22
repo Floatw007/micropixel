@@ -26,16 +26,18 @@ inline constexpr uint32_t kLvglIdleTimeoutMs = 1000U;
 inline constexpr uint32_t kLvglMaximumWaitMs = 120U * 1000U;
 inline constexpr uint64_t kTouchActivePollingIntervalUs = 10000U;
 inline constexpr uint64_t kTouchIdlePollingIntervalUs = 50000U;
+inline constexpr uint64_t kTouchLowPowerPollingIntervalUs = 100000U;
 static_assert(kWidth == ui_profile::Layout::kWidth);
 static_assert(kHeight == ui_profile::Layout::kHeight);
 
 struct InputState final {
     buses::I2cExecutor i2c_executor{};
-    input::EspLcdTouchInput touch_input{
-        kWidth,
-        kHeight,
-        micropixel::device::kMaxTouchPoints,
-        {.active_interval_us = kTouchActivePollingIntervalUs, .idle_interval_us = kTouchIdlePollingIntervalUs}};
+    input::EspLcdTouchInput touch_input{kWidth,
+                                        kHeight,
+                                        micropixel::device::kMaxTouchPoints,
+                                        {.active_interval_us = kTouchActivePollingIntervalUs,
+                                         .idle_interval_us = kTouchIdlePollingIntervalUs,
+                                         .low_power_interval_us = kTouchLowPowerPollingIntervalUs}};
 };
 
 struct BoardState final {
