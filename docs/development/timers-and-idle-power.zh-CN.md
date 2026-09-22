@@ -7,7 +7,7 @@
 
 | 来源 | 周期 | 功能 | 空闲策略 |
 |---|---:|---|---|
-| LVGL tick clock | 按需读取 | LVGL 9.5 通过 tick callback 读取 `esp_timer_get_time()` | 产品不再创建 1 ms periodic tick timer；时间只在 LVGL 查询时读取 |
+| LVGL tick clock | 按需读取 | LVGL 9.6 通过 tick callback 读取 `esp_timer_get_time()` | 产品不再创建 1 ms periodic tick timer；时间只在 LVGL 查询时读取 |
 | Display refresh timer | 1000 ms | 检查 dirty area 并提交 LCD 刷新 | 静态画面不靠它轮询刷新；Host/Guest 修改 UI 时通过 `RequestDisplayRefresh()` 将其置为 ready 并唤醒 adapter |
 | Host pointer read timer | LVGL 默认 4 ms | 系统菜单、状态层、Wi-Fi 页面和大厅的 pointer/scroll/long-press 处理 | 使用 `LV_INDEV_MODE_EVENT`；无触摸时暂停，触摸样本到达时恢复并置为 ready，释放后再次暂停 |
 | LVGL animation timer | LVGL 默认 4 ms | LVGL 内建动画 | 没有 animation 时由 LVGL 自身暂停；当前 Host 主要转场由 PPA/有限帧循环完成 |

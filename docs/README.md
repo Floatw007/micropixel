@@ -21,7 +21,7 @@ The following detailed guides are in Simplified Chinese.
 | [BundleFS](design/bundlefs.zh-CN.md) | [Audio](development/game-audio.zh-CN.md) |
 | [App Store](design/app-store.zh-CN.md) | [Timers and power](development/timers-and-idle-power.zh-CN.md) |
 | [USB control](design/usb-local-control.zh-CN.md) | [S3 boards](development/esp32-s3-box-3-bring-up.zh-CN.md) |
-| — | [ESP32-P4 Function EV Board](development/esp32-p4-function-ev-board-bring-up.zh-CN.md) · [Port status](development/esp32-p4-function-ev-port-status.zh-CN.md) |
+| — | [ESP32-P4 Function EV Board](development/esp32-p4-function-ev-board-bring-up.zh-CN.md) |
 | — | [Firmware releases](development/firmware-release.zh-CN.md) |
 | [Firmware source](../firmware/espressif/main/README.zh-CN.md) | [SDK releases](development/sdk-release.zh-CN.md) |
 
