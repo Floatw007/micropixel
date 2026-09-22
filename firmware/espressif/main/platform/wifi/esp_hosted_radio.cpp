@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_system.h"
+#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -115,8 +116,7 @@ esp_err_t UpdateCoprocessorIfNeeded(const char* partition_label) {
     StagedImage staged{};
     const esp_err_t inspect_status = InspectStagedImage(partition_label, staged);
     if (inspect_status != ESP_OK) {
-        ESP_LOGW(kTag, "C6 staged firmware '%s' is unavailable: %s", partition_label,
-                 esp_err_to_name(inspect_status));
+        ESP_LOGW(kTag, "C6 staged firmware '%s' is unavailable: %s", partition_label, esp_err_to_name(inspect_status));
         return inspect_status;
     }
 
@@ -175,6 +175,21 @@ esp_err_t EspHostedRadio::OnStationStarted() {
         }
     }
     LogCoprocessorInfo();
+    if (minimum_modem_sleep_) {
+        const esp_err_t power_save_status = esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+        if (power_save_status != ESP_OK) {
+            ESP_LOGE(kTag, "could not enable C6 minimum modem sleep: %s", esp_err_to_name(power_save_status));
+            return power_save_status;
+        }
+        wifi_ps_type_t configured = WIFI_PS_NONE;
+        const esp_err_t readback_status = esp_wifi_get_ps(&configured);
+        if (readback_status != ESP_OK || configured != WIFI_PS_MIN_MODEM) {
+            ESP_LOGE(kTag, "C6 minimum modem sleep readback failed: status=%s mode=%d",
+                     esp_err_to_name(readback_status), static_cast<int>(configured));
+            return readback_status == ESP_OK ? ESP_FAIL : readback_status;
+        }
+        ESP_LOGI(kTag, "C6 Wi-Fi minimum modem sleep enabled");
+    }
     return ESP_OK;
 }
 

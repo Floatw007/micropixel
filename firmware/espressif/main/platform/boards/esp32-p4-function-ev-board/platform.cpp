@@ -152,7 +152,7 @@ class Esp32P4FunctionEvBoard final : public Board {
     std::optional<BoardRegistration> registration_{};
     lvgl::GuestGraphicsOperationsContext graphics_context_{};
     adapters::GraphicsAdapter graphics_;
-    wifi::EspHostedRadio wifi_radio_{"slave_fw"};
+    wifi::EspHostedRadio wifi_radio_{"slave_fw", true};
     wifi::WifiManager wifi_{wifi_radio_};
     esp32_p4_function_ev_board::IdleFrequencyTelemetry idle_frequency_telemetry_{};
     board_detail::FunctionEvPresentation presentation_;

@@ -6,8 +6,8 @@ namespace micropixel::platform::wifi {
 
 class EspHostedRadio final : public WifiRadio {
    public:
-    explicit EspHostedRadio(const char* staged_firmware_partition = nullptr)
-        : staged_firmware_partition_(staged_firmware_partition) {}
+    explicit EspHostedRadio(const char* staged_firmware_partition = nullptr, bool minimum_modem_sleep = false)
+        : staged_firmware_partition_(staged_firmware_partition), minimum_modem_sleep_(minimum_modem_sleep) {}
 
     [[nodiscard]] esp_err_t Initialize() override;
     [[nodiscard]] esp_err_t OnStationStarted() override;
@@ -16,6 +16,7 @@ class EspHostedRadio final : public WifiRadio {
 
    private:
     const char* staged_firmware_partition_{};
+    bool minimum_modem_sleep_{};
 };
 
 }  // namespace micropixel::platform::wifi

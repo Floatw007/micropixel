@@ -85,6 +85,8 @@ Function EV profile 在 0.9.4 基线上启用以下空闲优化：
   `RequestDisplayRefresh()` 立即唤醒，不以 1 秒为交互延迟。
 - `esp_lv_adapter` 在 1 秒无 LVGL 工作后进入 pause，最长普通等待为 120 秒；新的显示或输入事件会显式唤醒。
 - 无 INT 线的 GT911 使用 50 ms 空闲/10 ms 按下自适应轮询，减少大厅静置时的 I²C 与任务唤醒。
+- ESP32-C6 station 启动后使用 `WIFI_PS_MIN_MODEM`；关联 AP 后按 DTIM 进入 modem-sleep，断线扫描与
+  重连策略保持不变。
 - 30 秒无前台显示活动后，板级任务先退出 Direct Surface 独占扫描，再通过
   `esp_lv_adapter_sleep_prepare()` 等待 flush 并脱离 panel，关闭背光和 EK79007，停用 DMA2D，依次删除
   DPI panel、DBI IO 与 DSI bus。`esp_lcd_panel_del()` 由驱动释放私有 `dsi_dpi` 最高频率锁。
@@ -98,8 +100,8 @@ Function EV profile 在 0.9.4 基线上启用以下空闲优化：
 关闭。运行中的探针任务本身会持有 `rtos0` 最高频率锁，所以不能用任务内的瞬时读数判断空闲频率；应查看
 `Mode stats` 中 40 MHz 档位的累计驻留时间。DPI panel 活跃时，ESP-IDF 的 `dsi_dpi` CPU 最高频率锁会阻止
 40 MHz 驻留；若启动后没有前台活动，30 秒受控挂起会释放该锁，第三个检查点应显示非零的 40 MHz 驻留。
-ESP-Hosted、USB 和
-GT911 轮询仍保持工作，automatic light sleep 仍关闭，因此这是显示域与 DFS 的第一阶段节能，不等于整机深度休眠。
+ESP-Hosted SDIO、USB 和 GT911 轮询仍保持工作，automatic light sleep 仍关闭，因此这是显示域、C6 modem-sleep
+与 DFS 的第一阶段节能，不等于整机深度休眠。
 
 显示应先亮起 MicroPixel Host 界面，启动亮度为 80%。静置 30 秒后背光应关闭；首次触摸应先恢复完整画面并
 继续传递该次按下。长按和连续滑动
@@ -110,7 +112,8 @@ GT911 轮询仍保持工作，automatic light sleep 仍关闭，因此这是显�
 ## Wi-Fi 与 USB 本地控制验收
 
 进入系统 Wi-Fi 设置后应能扫描、连接 2.4 GHz 网络并获得 IP。串口日志应能看到 ESP-Hosted
-协处理器初始化与 C6 版本信息；Wi-Fi 失败不会阻止显示、触摸和 USB 本地控制启动。
+协处理器初始化、C6 版本信息和 `C6 Wi-Fi minimum modem sleep enabled`；Wi-Fi 失败不会阻止显示、触摸和
+USB 本地控制启动。
 
 USB 端口可用后，先查看状态，再验证截图和触摸注入：
 
