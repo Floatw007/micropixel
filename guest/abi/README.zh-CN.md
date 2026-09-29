@@ -318,6 +318,14 @@ Guest 生成 PCM 的推流通道，能力位 `AUDIO_CAPABILITY_PCM_STREAM`：
   由音频任务非阻塞投递一次，下一次成功 WRITE 重新武装；`low_water_frames = 0` 关闭该事件。事件是
   advisory，队列满时不阻塞音频任务，而是保持武装等待下一个混音块重试。
 
+Audio 1.1 增加有界 PCM 输入，能力位 `AUDIO_CAPABILITY_INPUT_PCM`：
+
+- `INPUT_GET_INFO` 返回采样率、声道数、位宽与单次最大读取帧数；当前公共格式为 signed 16-bit mono；
+- `INPUT_READ{frame_count}` 同步返回 header 与紧随其后的 PCM，`frame_count` 上限为 256。Host 必须精确校验
+  请求、响应容量和长度，不可把 DMA 缓冲或 Host 指针暴露给 Guest；
+- 输入是设备共享能力，不创建长期 handle。没有输入硬件或初始化失败时不宣告 capability，并返回
+  `UNAVAILABLE`。应用必须先检查 capability，再读取实际格式。
+
 ## 设备发现与外设 Service
 
 Devices 是设备目录，不替代具体能力 Service。`LIST(kind, first_index)` 分页返回不透明 `device_id`：

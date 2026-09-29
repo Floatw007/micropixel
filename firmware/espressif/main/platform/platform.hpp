@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "device/contracts/audio.hpp"
+#include "device/contracts/audio_input.hpp"
 #include "device/contracts/battery.hpp"
 #include "device/contracts/block_storage.hpp"
 #include "device/contracts/board_info.hpp"
@@ -37,6 +38,7 @@ struct PlatformServices final {
     device::Graphics* graphics{};
     device::Input* input{};
     device::Audio* audio{};
+    device::AudioInput* audio_input{};
     device::Battery* battery{};
     device::Random* random{};
     device::Wifi* wifi{};
@@ -72,6 +74,7 @@ class BoardRegistration final {
     void SetGraphics(device::Graphics& graphics) { graphics_ = &graphics; }
     void SetInput(device::Input& input) { input_ = &input; }
     void SetAudio(device::Audio& audio) { audio_ = &audio; }
+    void SetAudioInput(device::AudioInput& audio_input) { audio_input_ = &audio_input; }
     void SetAudioOutput(audio::AudioOutputPeripheral& output, uint32_t sample_rate,
                         audio::AudioPowerController* power_controller = nullptr);
     void SetBattery(device::Battery& battery) { battery_ = &battery; }
@@ -105,6 +108,7 @@ class BoardRegistration final {
     device::Graphics* graphics_{};
     device::Input* input_{};
     device::Audio* audio_{};
+    device::AudioInput* audio_input_{};
     audio::AudioOutputPeripheral* audio_output_{};
     audio::AudioPowerController* audio_power_controller_{};
     uint32_t audio_sample_rate_{};

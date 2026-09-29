@@ -8,6 +8,7 @@
 #include "device/text.hpp"
 #include "esp_log.h"
 #include "runtime/guest_context.hpp"
+#include "runtime/abi/network_policy.hpp"
 #include "sdkconfig.h"
 
 namespace micropixel::runtime {
@@ -306,6 +307,96 @@ int32_t PowerInfoServiceEndpoint::Call(uint32_t method_id, const uint8_t* reques
     }
     return WriteResult<micropixel_power_info_t>(context_.PowerInfo(wire.device), response, response_capacity,
                                                 response_size_out);
+}
+
+ServiceDescriptor NetworkServiceEndpoint::Describe() const {
+    return ServiceDescriptor{
+        .service_id = MICROPIXEL_SERVICE_NETWORK,
+        .interface_major = MICROPIXEL_NETWORK_INTERFACE_MAJOR,
+        .interface_minor = MICROPIXEL_NETWORK_INTERFACE_MINOR,
+        .flags = MICROPIXEL_SERVICE_FLAG_CALL | MICROPIXEL_SERVICE_FLAG_EVENTS,
+        .capabilities = MICROPIXEL_NETWORK_CAP_HTTPS | MICROPIXEL_NETWORK_CAP_AUTHENTICATED_PROFILE |
+                        MICROPIXEL_NETWORK_CAP_MEMORY_CACHE | MICROPIXEL_NETWORK_CAP_PERSISTENT_CACHE,
+        .max_request_bytes = sizeof(micropixel_network_start_request_t) + MICROPIXEL_NETWORK_MAX_PATH_BYTES +
+                             MICROPIXEL_NETWORK_MAX_BODY_BYTES + MICROPIXEL_NETWORK_MAX_IDEMPOTENCY_KEY_BYTES,
+        .max_response_bytes = sizeof(micropixel_network_read_response_t) + MICROPIXEL_NETWORK_MAX_READ_BYTES,
+    };
+}
+
+int32_t NetworkServiceEndpoint::Call(uint32_t method_id, const uint8_t* request, uint32_t request_size,
+                                     uint8_t* response, uint32_t response_capacity,
+                                     uint32_t& response_size_out) {
+    if (method_id == MICROPIXEL_NETWORK_METHOD_GET_INFO) {
+        if (!EmptyRequest(request_size)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        return WriteResult<micropixel_network_info_t>(context_.NetworkInfo(), response, response_capacity,
+                                                      response_size_out);
+    }
+    if (method_id == MICROPIXEL_NETWORK_METHOD_START) {
+        micropixel_network_start_request_t wire{};
+        if (!ReadVariableRequest(request, request_size, wire) || wire.size != request_size || wire.reserved0 != 0U ||
+            wire.method < MICROPIXEL_NETWORK_HTTP_GET || wire.method > MICROPIXEL_NETWORK_HTTP_DELETE ||
+            wire.cache_mode > MICROPIXEL_NETWORK_CACHE_PERSISTENT_FALLBACK ||
+            wire.path_length == 0U || wire.path_length > MICROPIXEL_NETWORK_MAX_PATH_BYTES ||
+            wire.idempotency_key_length > MICROPIXEL_NETWORK_MAX_IDEMPOTENCY_KEY_BYTES ||
+            wire.body_length > MICROPIXEL_NETWORK_MAX_BODY_BYTES ||
+            sizeof(wire) + wire.path_length + wire.body_length + wire.idempotency_key_length != request_size ||
+            ((wire.method == MICROPIXEL_NETWORK_HTTP_GET || wire.method == MICROPIXEL_NETWORK_HTTP_DELETE) &&
+             wire.body_length != 0U) ||
+            (wire.method != MICROPIXEL_NETWORK_HTTP_GET && wire.cache_mode != MICROPIXEL_NETWORK_CACHE_NONE)) {
+            return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        }
+        const auto* cursor = request + sizeof(wire);
+        const std::string_view path(reinterpret_cast<const char*>(cursor), wire.path_length);
+        cursor += wire.path_length;
+        const std::span<const uint8_t> body(cursor, wire.body_length);
+        cursor += wire.body_length;
+        const std::string_view idempotency_key(reinterpret_cast<const char*>(cursor), wire.idempotency_key_length);
+        if (!ValidRelativeNetworkPath(path) || !ValidIdempotencyKey(idempotency_key)) {
+            return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        }
+        const device::ManagedNetworkRequest managed{
+            .method = wire.method,
+            .cache_mode = wire.cache_mode,
+            .path = path,
+            .body = body,
+            .idempotency_key = idempotency_key,
+        };
+        return WriteResult<micropixel_network_start_response_t>(context_.NetworkStart(managed), response,
+                                                                response_capacity, response_size_out);
+    }
+    if (method_id == MICROPIXEL_NETWORK_METHOD_READ) {
+        micropixel_network_read_request_t wire{};
+        if (!ReadRequest(request, request_size, wire) || wire.request_handle == 0U || wire.capacity == 0U ||
+            wire.capacity > MICROPIXEL_NETWORK_MAX_READ_BYTES ||
+            response == nullptr || response_capacity < sizeof(micropixel_network_read_response_t) + wire.capacity) {
+            response_size_out = sizeof(micropixel_network_read_response_t) + wire.capacity;
+            return response == nullptr || response_capacity < response_size_out ? MICROPIXEL_STATUS_BUFFER_TOO_SMALL
+                                                                                : MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        }
+        uint32_t total_length = 0U;
+        auto read = context_.NetworkRead(wire.request_handle, wire.offset,
+                                         std::span<uint8_t>(response + sizeof(micropixel_network_read_response_t),
+                                                            wire.capacity),
+                                         total_length);
+        if (!read) return read.error().status;
+        if (*read > wire.capacity || *read > UINT16_MAX) return MICROPIXEL_STATUS_INTERNAL;
+        micropixel_network_read_response_t header{};
+        header.size = static_cast<uint16_t>(sizeof(header) + *read);
+        header.chunk_length = static_cast<uint16_t>(*read);
+        header.request_handle = wire.request_handle;
+        header.total_length = total_length;
+        header.offset = wire.offset;
+        std::memcpy(response, &header, sizeof(header));
+        response_size_out = sizeof(header) + *read;
+        return MICROPIXEL_STATUS_OK;
+    }
+    if (method_id == MICROPIXEL_NETWORK_METHOD_CANCEL || method_id == MICROPIXEL_NETWORK_METHOD_CLOSE) {
+        uint32_t handle = 0U;
+        if (!ReadHandle(request, request_size, handle)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        return ResultStatus(method_id == MICROPIXEL_NETWORK_METHOD_CANCEL ? context_.NetworkCancel(handle)
+                                                                          : context_.NetworkClose(handle));
+    }
+    return MICROPIXEL_STATUS_UNSUPPORTED;
 }
 
 SystemServiceEndpoint::SystemServiceEndpoint(std::string_view effective_locale,
@@ -665,7 +756,8 @@ ServiceDescriptor AudioServiceEndpoint::Describe() const {
         .flags = MICROPIXEL_SERVICE_FLAG_CALL | MICROPIXEL_SERVICE_FLAG_EVENTS,
         .capabilities = capabilities,
         .max_request_bytes = MICROPIXEL_AUDIO_PCM_MAX_WRITE_BYTES,
-        .max_response_bytes = sizeof(micropixel_audio_info_t),
+        .max_response_bytes = static_cast<uint32_t>(sizeof(micropixel_audio_input_read_response_t)) +
+                              MICROPIXEL_AUDIO_INPUT_MAX_READ_FRAMES * sizeof(int16_t),
     };
 }
 
@@ -677,6 +769,41 @@ int32_t AudioServiceEndpoint::Call(uint32_t method_id, const uint8_t* request, u
         }
         return WriteResult<micropixel_audio_info_t>(context_.AudioInfo(), response, response_capacity,
                                                     response_size_out);
+    }
+    if (method_id == MICROPIXEL_AUDIO_METHOD_INPUT_GET_INFO) {
+        if (!EmptyRequest(request_size)) {
+            return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        }
+        return WriteResult<micropixel_audio_input_info_t>(context_.AudioInputInfo(), response, response_capacity,
+                                                          response_size_out);
+    }
+    if (method_id == MICROPIXEL_AUDIO_METHOD_INPUT_READ) {
+        micropixel_audio_input_read_request_t wire{};
+        if (!ReadRequest(request, request_size, wire) || wire.frame_count == 0U ||
+            wire.frame_count > MICROPIXEL_AUDIO_INPUT_MAX_READ_FRAMES) {
+            return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        }
+        const uint32_t required =
+            static_cast<uint32_t>(sizeof(micropixel_audio_input_read_response_t)) + wire.frame_count * sizeof(int16_t);
+        if (response == nullptr || response_capacity < required) {
+            response_size_out = required;
+            return MICROPIXEL_STATUS_BUFFER_TOO_SMALL;
+        }
+        alignas(4) int16_t samples[MICROPIXEL_AUDIO_INPUT_MAX_READ_FRAMES]{};
+        const auto result = context_.AudioInputRead(samples, wire.frame_count);
+        if (!result) {
+            return result.error().status;
+        }
+        if (*result > wire.frame_count) {
+            return MICROPIXEL_STATUS_INTERNAL;
+        }
+        micropixel_audio_input_read_response_t header{};
+        header.size = static_cast<uint16_t>(sizeof(header) + *result * sizeof(int16_t));
+        header.frame_count = *result;
+        std::memcpy(response, &header, sizeof(header));
+        std::memcpy(response + sizeof(header), samples, *result * sizeof(int16_t));
+        response_size_out = header.size;
+        return MICROPIXEL_STATUS_OK;
     }
     if (method_id == MICROPIXEL_AUDIO_METHOD_TONE_PLAY) {
         micropixel_audio_tone_t wire{};

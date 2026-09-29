@@ -116,6 +116,22 @@ bool Application::DecodeEventInternal(Event& event, uint64_t timeout_us) const {
         return true;
     }
 
+    if (raw.service_id == MICROPIXEL_SERVICE_NETWORK &&
+        raw.event_id == MICROPIXEL_NETWORK_EVENT_REQUEST_COMPLETE) {
+        micropixel_network_complete_event_payload_t payload{};
+        CopyBytes(&payload, raw.payload, sizeof(payload));
+        if (payload.request_handle == 0U || payload.request_handle != raw.source || payload.reserved0 != 0U ||
+            payload.source < MICROPIXEL_NETWORK_RESPONSE_LIVE ||
+            payload.source > MICROPIXEL_NETWORK_RESPONSE_PERSISTENT_CACHE ||
+            payload.body_length > MICROPIXEL_NETWORK_MAX_RESPONSE_BYTES) {
+            runtime::Panic("application.wait_event.network_payload", MICROPIXEL_STATUS_INTERNAL);
+        }
+        event = Event{NetworkCompleteEvent{timestamp, payload.request_handle, raw.status,
+                                           payload.body_length, payload.http_status, payload.source,
+                                           payload.cache_age_seconds}};
+        return true;
+    }
+
     if (raw.service_id == MICROPIXEL_SERVICE_DEVICES &&
         (raw.event_id == MICROPIXEL_DEVICES_EVENT_ADDED || raw.event_id == MICROPIXEL_DEVICES_EVENT_REMOVED)) {
         micropixel_device_event_payload_t payload{};

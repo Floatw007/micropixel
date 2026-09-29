@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>食堂商家终端 · 经营概览预览</title>
+  <style>
+    :root { --ink:#172322; --muted:#708a84; --line:#e6eeeb; --paper:#fff; --ground:#f5f7f6; --teal:#103c39; --teal-2:#17443f; --gold:#f3bf57; --mint:#dfeee9; --green:#55c98c; --orange:#e17748; --red:#cf7464; }
+    * { box-sizing:border-box; }
+    html,body { margin:0; min-height:100%; background:#dfe5e3; font-family:"Noto Sans SC","Microsoft YaHei",sans-serif; color:var(--ink); }
+    .device { width:1024px; height:600px; margin:20px auto; overflow:hidden; display:flex; background:var(--ground); box-shadow:0 20px 60px rgba(16,60,57,.24); }
+    .sidebar { width:154px; flex:none; padding:18px 12px; background:var(--teal); color:#eff6f3; display:flex; flex-direction:column; }
+    .brand { display:flex; align-items:center; gap:9px; margin:0 5px 20px; }
+    .brand-mark { width:29px; height:29px; border-radius:9px; display:grid; place-items:center; background:var(--gold); color:var(--teal); font-size:16px; font-weight:900; }
+    .brand b { display:block; font-size:14px; letter-spacing:.5px; } .brand small { display:block; color:#9eb8b1; font-size:9px; margin-top:1px; }
+    .store { margin:0 3px 14px; padding:10px 9px; border:1px solid rgba(255,255,255,.12); border-radius:10px; background:rgba(255,255,255,.05); }
+    .store strong { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:11px; } .store span { display:flex; align-items:center; gap:5px; color:#9eb8b1; margin-top:6px; font-size:9px; }
+    .dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--green); }
+    nav { display:grid; gap:4px; } .nav { height:40px; padding:0 9px; border-radius:9px; display:flex; align-items:center; gap:8px; color:#b5ccc6; font-size:11px; }
+    .nav.active { color:var(--teal); background:var(--gold); font-weight:800; } .ico { width:15px; text-align:center; font-size:14px; }
+    .badge { margin-left:auto; min-width:16px; padding:1px 5px; border-radius:10px; background:#e17748; color:#fff; text-align:center; font-size:9px; font-weight:700; }
+    .terminal { margin: auto 4px 2px; padding-top:13px; border-top:1px solid rgba(255,255,255,.13); color:#9eb8b1; font-size:9px; line-height:1.7; }
+    .terminal b { color:#edf6f3; font-size:10px; }
+    .main { min-width:0; flex:1; } .topbar { height:61px; padding:0 27px; border-bottom:1px solid var(--line); background:var(--paper); display:flex; align-items:center; justify-content:space-between; }
+    .crumb { color:var(--muted); font-size:11px; } .crumb b { color:var(--ink); font-size:16px; margin-left:8px; } .topright { display:flex; align-items:center; gap:13px; color:var(--muted); font-size:10px; }
+    .status { border-radius:14px; padding:5px 9px; background:#e2f5eb; color:#397e5d; font-weight:700; } .status .dot { margin-right:4px; vertical-align:1px; }
+    .content { padding:18px 25px; }
+    .hero { height:101px; padding:17px 20px; border-radius:14px; background:var(--mint); position:relative; overflow:hidden; }
+    .hero:after { content:""; position:absolute; width:138px; height:138px; right:-32px; top:-42px; border-radius:50%; background:rgba(85,201,140,.22); box-shadow:-26px 52px 0 rgba(243,191,87,.19); }
+    .eyebrow { color:#4c8773; font-weight:800; font-size:9px; letter-spacing:1.1px; }.hero h1 { margin:5px 0 3px; font-size:22px; line-height:1.15; }.hero p { margin:0; color:#56766c; font-size:11px; }
+    .metric-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:12px; }.metric { height:77px; padding:11px 13px; border:1px solid var(--line); border-radius:12px; background:var(--paper); }.metric.teal { color:white; border-color:var(--teal); background:var(--teal); }.metric .label { color:var(--muted); font-size:10px; }.metric.teal .label { color:#b5ccc6; }.metric .num { margin-top:6px; font-size:24px; font-weight:800; line-height:1; }.metric small { font-size:10px; font-weight:400; }.metric .up { color:#4da27d; margin-left:5px; font-size:9px; }.metric.teal .up { color:#f5d489; }
+    .lower { display:grid; grid-template-columns:minmax(0,1.58fr) minmax(220px,.92fr); gap:12px; margin-top:12px; }.card { min-width:0; border:1px solid var(--line); border-radius:13px; background:var(--paper); overflow:hidden; }.card-head { height:43px; padding:0 14px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); }.card-title { font-size:13px; font-weight:800; }.link { color:#327e6a; font-size:10px; font-weight:700; }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; } th { height:25px; color:var(--muted); background:#fbfcfc; text-align:left; padding:0 12px; font-size:9px; font-weight:600; } td { height:32px; padding:0 12px; border-top:1px solid #f0f4f2; font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .order { color:#366e60; font-weight:800; }.tag { padding:3px 6px; border-radius:9px; background:#fff0df; color:#bd7145; font-size:9px; font-weight:700; }.tag.green { background:#e2f5eb; color:#4a9a70; }
+    .stock { padding:0 14px; }.stock-row { padding:10px 0 8px; border-bottom:1px solid #eef3f1; }.stock-row:last-child { border:0; }.stock-name { display:flex; justify-content:space-between; align-items:center; font-size:10px; font-weight:700; }.stock-name small { color:var(--muted); font-weight:400; }.bar { height:5px; margin-top:7px; border-radius:8px; background:#edf2f0; overflow:hidden; }.bar span { display:block; height:100%; border-radius:8px; background:var(--green); }.bar.warn span { background:var(--orange); }.sync { padding:9px 14px; background:#fbfcfc; color:var(--muted); font-size:9px; }.sync .dot { width:5px; height:5px; margin-right:4px; }
+    @media(max-width:1050px) { .device { margin:0; transform-origin:top left; } }
+  </style>
+</head>
+<body>
+  <main class="device" aria-label="1024×600 Function EV 商家终端预览">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">食</div><div><b>食堂商家端</b><small>MERCHANT TERMINAL</small></div></div>
+      <div class="store"><strong>一食堂 · 轻食窗口</strong><span><i class="dot"></i>终端已连接</span></div>
+      <nav>
+        <div class="nav active"><span class="ico">▦</span>经营概览</div>
+        <div class="nav"><span class="ico">□</span>订单处理 <b class="badge">12</b></div>
+        <div class="nav"><span class="ico">≡</span>菜品管理</div>
+        <div class="nav"><span class="ico">◉</span>余量设备</div>
+        <div class="nav"><span class="ico">◷</span>预约管理</div>
+        <div class="nav"><span class="ico">⚙</span>终端诊断</div>
+      </nav>
+      <div class="terminal"><b>P4-TERMINAL-01</b><br>Function EV · 已校时</div>
+    </aside>
+    <section class="main">
+      <header class="topbar"><div class="crumb">食堂商家端 <b>经营概览</b></div><div class="topright"><span>09:41 · 2026/09/24</span><span class="status"><i class="dot"></i>数据同步正常</span></div></header>
+      <div class="content">
+        <section class="hero"><div class="eyebrow">TODAY · 营业中</div><h1>上午好，轻食窗口</h1><p>订单、菜品与 K230 视觉余量正在实时同步。</p></section>
+        <section class="metric-grid">
+          <article class="metric teal"><div class="label">待处理订单</div><div class="num">12 <small>单</small><span class="up">+3</span></div></article>
+          <article class="metric"><div class="label">制作中</div><div class="num">4 <small>单</small></div></article>
+          <article class="metric"><div class="label">待取餐</div><div class="num">3 <small>单</small></div></article>
+          <article class="metric"><div class="label">今日营收</div><div class="num">¥468<small>.00</small></div></article>
+        </section>
+        <section class="lower">
+          <article class="card"><div class="card-head"><span class="card-title">最近订单</span><span class="link">查看全部 →</span></div><table><thead><tr><th style="width:26%">订单号</th><th style="width:33%">菜品</th><th style="width:18%">金额</th><th>状态</th></tr></thead><tbody><tr><td class="order">#20260924031</td><td>香煎鸡胸轻食碗</td><td>¥18.00</td><td><span class="tag">待接单</span></td></tr><tr><td class="order">#20260924030</td><td>番茄牛肉盖饭</td><td>¥15.00</td><td><span class="tag green">制作中</span></td></tr><tr><td class="order">#20260924029</td><td>鲜虾藜麦沙拉</td><td>¥16.00</td><td><span class="tag green">待取餐</span></td></tr></tbody></table></article>
+          <article class="card"><div class="card-head"><span class="card-title">实时余量</span><span class="link">设备详情 →</span></div><div class="stock"><div class="stock-row"><div class="stock-name"><span>香煎鸡胸轻食碗</span><small>76% · LIVE</small></div><div class="bar"><span style="width:76%"></span></div></div><div class="stock-row"><div class="stock-name"><span>番茄牛肉盖饭</span><small>42% · LIVE</small></div><div class="bar"><span style="width:42%"></span></div></div><div class="stock-row"><div class="stock-name"><span>藜麦蔬菜沙拉</span><small>18% · LOW</small></div><div class="bar warn"><span style="width:18%"></span></div></div></div><div class="sync"><i class="dot"></i>余量数据 2 秒前更新</div></article>
+        </section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

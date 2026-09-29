@@ -17,6 +17,7 @@
 #include "runtime/services/direct_surface_service.hpp"
 #include "runtime/services/gpio_service.hpp"
 #include "runtime/services/haptics_service.hpp"
+#include "runtime/services/network_service.hpp"
 #include "runtime/services/raster_service.hpp"
 #include "runtime/services/sensor_service.hpp"
 #include "runtime/services/storage_service.hpp"
@@ -197,7 +198,19 @@ class GuestContext final {
             this, text, copy);
     }
     [[nodiscard]] device::DeviceResult<micropixel_input_info_t> InputInfo() const { return devices_.input().GetInfo(); }
-    [[nodiscard]] device::DeviceResult<micropixel_audio_info_t> AudioInfo() const { return devices_.audio().GetInfo(); }
+    [[nodiscard]] device::DeviceResult<micropixel_audio_info_t> AudioInfo() const {
+        auto result = devices_.audio().GetInfo();
+        if (result && devices_.audio_input().GetInfo()) {
+            result->capabilities |= MICROPIXEL_AUDIO_CAPABILITY_INPUT_PCM;
+        }
+        return result;
+    }
+    [[nodiscard]] device::DeviceResult<micropixel_audio_input_info_t> AudioInputInfo() const {
+        return devices_.audio_input().GetInfo();
+    }
+    [[nodiscard]] device::DeviceResult<uint32_t> AudioInputRead(int16_t* mono_samples, uint32_t frame_capacity) const {
+        return devices_.audio_input().Read(mono_samples, frame_capacity);
+    }
     [[nodiscard]] device::DeviceResult<uint32_t> RandomU32() const { return devices_.random().U32(); }
     [[nodiscard]] device::DeviceResult<micropixel_devices_list_response_t> DevicesList(uint16_t kind,
                                                                                        uint16_t first_index) const {
@@ -260,6 +273,18 @@ class GuestContext final {
     [[nodiscard]] device::DeviceResult<micropixel_power_info_t> PowerInfo(micropixel_device_id_t device) {
         return devices_.power_info().Get(device);
     }
+    [[nodiscard]] ServiceResult<micropixel_network_info_t> NetworkInfo() const { return network_.GetInfo(); }
+    [[nodiscard]] ServiceResult<micropixel_network_start_response_t> NetworkStart(
+        const device::ManagedNetworkRequest& request) {
+        return network_.Start(request);
+    }
+    [[nodiscard]] ServiceResult<uint32_t> NetworkRead(uint32_t handle, uint32_t offset,
+                                                       std::span<uint8_t> destination,
+                                                       uint32_t& total_length_out) const {
+        return network_.Read(handle, offset, destination, total_length_out);
+    }
+    [[nodiscard]] ServiceResult<void> NetworkCancel(uint32_t handle) { return network_.Cancel(handle); }
+    [[nodiscard]] ServiceResult<void> NetworkClose(uint32_t handle) { return network_.Close(handle); }
     [[nodiscard]] device::DeviceResult<void> AudioPlayTone(const micropixel_audio_tone_t& tone) const {
         return devices_.audio().PlayTone(tone);
     }
@@ -346,6 +371,7 @@ class GuestContext final {
     SensorService sensors_;
     GpioService gpio_;
     HapticsService haptics_;
+    NetworkService network_;
     ResourceService resources_;
     AudioPlaybackService audio_playback_;
     PcmStreamService pcm_stream_;
@@ -367,6 +393,7 @@ class GuestContext final {
     GpioServiceEndpoint gpio_endpoint_;
     HapticsServiceEndpoint haptics_endpoint_;
     PowerInfoServiceEndpoint power_info_endpoint_;
+    NetworkServiceEndpoint network_endpoint_;
     ServiceRegistry service_registry_;
     uint32_t core_sequence_{};
     bool suspended_{};

@@ -8,6 +8,8 @@
 #include "esp_pm.h"
 #include "host/ui/lvgl/square_common/square_system_ui.hpp"
 #include "platform/adapters/graphics_adapter.hpp"
+#include "platform/boards/esp32-p4-function-ev-board/board_config.hpp"
+#include "platform/boards/esp32-p4-function-ev-board/i2s_audio.hpp"
 #include "platform/boards/esp32-p4-function-ev-board/idle_frequency_telemetry.hpp"
 #include "platform/boards/esp32-p4-function-ev-board/platform_state.hpp"
 #include "platform/boards/esp32-p4-function-ev-board/presentation.hpp"
@@ -16,6 +18,7 @@
 #include "platform/lvgl/lvgl_wakeup.hpp"
 #include "platform/memory/ext_ram_bss.hpp"
 #include "platform/memory/internal_ram.hpp"
+#include "platform/storage/sd_card_block_storage.hpp"
 #include "platform/transports/development_display_control.hpp"
 #include "platform/wifi/esp_hosted_radio.hpp"
 #include "platform/wifi/wifi_manager.hpp"
@@ -25,6 +28,7 @@ namespace micropixel::platform {
 namespace {
 
 namespace board_detail = esp32_p4_function_ev_board::detail;
+namespace board = esp32_p4_function_ev_board::board;
 
 esp_err_t EnableAutomaticLightSleep() {
     esp_pm_config_t power_config{};
@@ -32,9 +36,26 @@ esp_err_t EnableAutomaticLightSleep() {
                         "read power-management configuration failed");
     power_config.light_sleep_enable = true;
     ESP_RETURN_ON_ERROR(esp_pm_configure(&power_config), board_detail::kTag, "enable automatic light sleep failed");
+    ESP_LOGI(board_detail::kTag, "automatic light sleep configured: CPU=%d..%d MHz", power_config.min_freq_mhz,
+             power_config.max_freq_mhz);
+    return ESP_OK;
+}
+
+esp_err_t ProtectUsbLocalControlFromLightSleep(esp_pm_lock_handle_t& lock) {
+    if (lock != nullptr) {
+        return ESP_OK;
+    }
+    ESP_RETURN_ON_ERROR(esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "micropixel_usb", &lock), board_detail::kTag,
+                        "create USB local-control light-sleep guard failed");
+    const esp_err_t status = esp_pm_lock_acquire(lock);
+    if (status != ESP_OK) {
+        (void)esp_pm_lock_delete(lock);
+        lock = nullptr;
+        ESP_LOGE(board_detail::kTag, "acquire USB local-control light-sleep guard failed: %s", esp_err_to_name(status));
+        return status;
+    }
     ESP_LOGI(board_detail::kTag,
-             "automatic light sleep enabled: CPU=%d..%d MHz, USB connection protected by NO_LIGHT_SLEEP lock",
-             power_config.min_freq_mhz, power_config.max_freq_mhz);
+             "USB local control protected by persistent NO_LIGHT_SLEEP lock; display suspend and DFS remain enabled");
     return ESP_OK;
 }
 
@@ -101,9 +122,31 @@ class Esp32P4FunctionEvBoard final : public Board {
         ESP_RETURN_ON_FALSE(memory::IsInternalObject(*this), ESP_ERR_INVALID_STATE, board_detail::kTag,
                             "Board control objects must reside in internal RAM");
         ESP_RETURN_ON_ERROR(EnableAutomaticLightSleep(), board_detail::kTag, "configure automatic light sleep failed");
+        ESP_RETURN_ON_ERROR(ProtectUsbLocalControlFromLightSleep(usb_light_sleep_lock_), board_detail::kTag,
+                            "protect USB local control from light sleep failed");
         ESP_LOGI(board_detail::kTag, "initializing ESP32-P4-Function-EV-Board display and touch");
         ESP_RETURN_ON_ERROR(hardware_.Initialize(), board_detail::kTag, "initialize display/touch hardware failed");
+        if (const esp_err_t storage_status = sd_storage_.Initialize(storage::SdCardBlockStorage::Config{
+                .slot = board::kSdMmcSlot,
+                .width = board::kSdBusWidth,
+                .clock = board::kSdClock,
+                .command = board::kSdCommand,
+                .data0 = board::kSdData0,
+                .data1 = board::kSdData1,
+                .data2 = board::kSdData2,
+                .data3 = board::kSdData3,
+                .power_ldo_channel = board::kSdLdoChannel,
+                .max_frequency_khz = board::kSdMaximumFrequencyKhz,
+            });
+            storage_status != ESP_OK) {
+            ESP_LOGW(board_detail::kTag, "SD App storage is unavailable: %s", esp_err_to_name(storage_status));
+        }
         ESP_RETURN_ON_ERROR(state_.i2c_executor.Initialize(), board_detail::kTag, "start I2C executor failed");
+        const esp_err_t audio_config_status = audio_.Configure(hardware_.I2cBus(), state_.i2c_executor);
+        if (audio_config_status != ESP_OK) {
+            ESP_LOGW(board_detail::kTag, "ES8311 audio unavailable for this boot: %s",
+                     esp_err_to_name(audio_config_status));
+        }
         ESP_RETURN_ON_ERROR(state_.touch_input.Initialize(hardware_.Touch(), state_.i2c_executor), board_detail::kTag,
                             "bind GT911 touch failed");
         ESP_RETURN_ON_ERROR(InitializeLvgl(state_), board_detail::kTag, "initialize display pipeline failed");
@@ -139,11 +182,20 @@ class Esp32P4FunctionEvBoard final : public Board {
         });
         registration.SetGraphics(graphics_);
         registration.SetInput(state_.ui.Input());
+        if (audio_config_status == ESP_OK) {
+            registration.SetAudioOutput(audio_, audio_.SampleRate());
+            registration.SetAudioInput(audio_);
+        }
         registration.SetWifi(wifi_);
         registration.SetLocalControl(state_.local_control);
+        if (sd_storage_.present()) {
+            registration.SetAppStorage(sd_storage_, 0U, true);
+        }
         registration.SetSystemUi(system_ui_);
         ESP_LOGI(board_detail::kTag,
-                 "ready: EK79007 1024x600 RGB888 + GT911 polled touch + ESP32-C6 Wi-Fi + USB local control");
+                 "ready: EK79007 1024x600 RGB888 + GT911 touch + ES8311/NS4150 audio=%s + ESP32-C6 Wi-Fi + USB "
+                 "local control + SD=%s",
+                 audio_config_status == ESP_OK ? "ready" : "unavailable", sd_storage_.present() ? "ready" : "absent");
         return context.Publish(registration) ? ESP_OK : ESP_ERR_INVALID_STATE;
     }
 
@@ -168,6 +220,9 @@ class Esp32P4FunctionEvBoard final : public Board {
     adapters::GraphicsAdapter graphics_;
     wifi::EspHostedRadio wifi_radio_{"slave_fw", true};
     wifi::WifiManager wifi_{wifi_radio_};
+    storage::SdCardBlockStorage sd_storage_{};
+    esp32_p4_function_ev_board::I2sAudio audio_{};
+    esp_pm_lock_handle_t usb_light_sleep_lock_{};
     esp32_p4_function_ev_board::IdleFrequencyTelemetry idle_frequency_telemetry_{};
     board_detail::FunctionEvPresentation presentation_;
     host_ui::lvgl::square_common::SquareSystemUi system_ui_;

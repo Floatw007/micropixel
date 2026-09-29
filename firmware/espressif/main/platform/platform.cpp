@@ -69,6 +69,10 @@ defaults::UnavailableAudio& MissingAudio() {
     static defaults::UnavailableAudio value;
     return value;
 }
+defaults::UnavailableAudioInput& MissingAudioInput() {
+    static defaults::UnavailableAudioInput value;
+    return value;
+}
 defaults::UnavailableBattery& MissingBattery() {
     static defaults::UnavailableBattery value;
     return value;
@@ -92,10 +96,10 @@ defaults::UnavailableSystemUi& MissingSystemUi() {
 }  // namespace
 
 bool PlatformServices::Complete() const {
-    return graphics != nullptr && input != nullptr && audio != nullptr && battery != nullptr && random != nullptr &&
-           wifi != nullptr && cellular != nullptr && power != nullptr && local_control != nullptr &&
-           devices != nullptr && sensors != nullptr && gpio != nullptr && haptics != nullptr &&
-           board_info.board != nullptr && system_ui != nullptr;
+    return graphics != nullptr && input != nullptr && audio != nullptr && audio_input != nullptr &&
+           battery != nullptr && random != nullptr && wifi != nullptr && cellular != nullptr && power != nullptr &&
+           local_control != nullptr && devices != nullptr && sensors != nullptr && gpio != nullptr &&
+           haptics != nullptr && board_info.board != nullptr && system_ui != nullptr;
 }
 
 void BoardRegistration::SetAudioOutput(audio::AudioOutputPeripheral& output, uint32_t sample_rate,
@@ -174,6 +178,9 @@ bool Platform::Publish(const BoardRegistration& registration) {
     if (audio != nullptr) {
         valid = device_registry_.RegisterAudioOutput() && valid;
     }
+    if (registration.audio_input_ != nullptr) {
+        valid = device_registry_.RegisterAudioInput() && valid;
+    }
     if (registration.battery_ != nullptr || registration.power_ != nullptr) {
         valid = device_registry_.RegisterPower() && valid;
     }
@@ -197,6 +204,7 @@ bool Platform::Publish(const BoardRegistration& registration) {
         .graphics = registration.graphics_ != nullptr ? registration.graphics_ : &MissingGraphics(),
         .input = registration.input_ != nullptr ? registration.input_ : &MissingInput(),
         .audio = audio != nullptr ? audio : &MissingAudio(),
+        .audio_input = registration.audio_input_ != nullptr ? registration.audio_input_ : &MissingAudioInput(),
         .battery = registration.battery_ != nullptr ? registration.battery_ : &MissingBattery(),
         .random = &random::SystemRandom(),
         .wifi = registration.wifi_ != nullptr ? registration.wifi_ : &MissingWifi(),

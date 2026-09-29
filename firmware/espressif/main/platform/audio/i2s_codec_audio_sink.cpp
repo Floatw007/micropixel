@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <limits>
 
 #include "esp_check.h"
 #include "esp_codec_dev_defaults.h"
@@ -173,7 +174,21 @@ esp_err_t I2sCodecAudioSink::Configure(i2c_master_bus_handle_t bus, buses::I2cEx
     control_.address = config_.codec_i2c_address;
     control_.port = config_.i2c_port;
     control_.open = true;
+    codec_mutex_ = xSemaphoreCreateMutexStatic(&codec_mutex_storage_);
+    if (codec_mutex_ == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
     return ESP_OK;
+}
+
+bool I2sCodecAudioSink::Lock(TickType_t timeout) const {
+    return codec_mutex_ != nullptr && xSemaphoreTake(codec_mutex_, timeout) == pdTRUE;
+}
+
+void I2sCodecAudioSink::Unlock() const {
+    if (codec_mutex_ != nullptr) {
+        (void)xSemaphoreGive(codec_mutex_);
+    }
 }
 
 int I2sCodecAudioSink::AmplifierLevel(bool enabled) const { return enabled != config_.amplifier_active_low ? 1 : 0; }
@@ -218,7 +233,7 @@ esp_err_t I2sCodecAudioSink::Initialize() {
     channel_config.dma_desc_num = config_.dma_descriptor_count;
     channel_config.dma_frame_num = config_.dma_frame_count;
     channel_config.auto_clear_after_cb = true;
-    status = i2s_new_channel(&channel_config, &tx_, nullptr);
+    status = i2s_new_channel(&channel_config, &tx_, HasInput() ? &rx_ : nullptr);
     if (status != ESP_OK) {
         return FailInitialization(status);
     }
@@ -231,15 +246,22 @@ esp_err_t I2sCodecAudioSink::Initialize() {
     standard_config.gpio_cfg.bclk = config_.bit_clock;
     standard_config.gpio_cfg.ws = config_.word_select;
     standard_config.gpio_cfg.dout = config_.data_out;
-    standard_config.gpio_cfg.din = I2S_GPIO_UNUSED;
+    standard_config.gpio_cfg.din = HasInput() ? config_.data_in : I2S_GPIO_UNUSED;
     status = i2s_channel_init_std_mode(tx_, &standard_config);
     if (status != ESP_OK) {
         return FailInitialization(status);
+    }
+    if (rx_ != nullptr) {
+        status = i2s_channel_init_std_mode(rx_, &standard_config);
+        if (status != ESP_OK) {
+            return FailInitialization(status);
+        }
     }
 
     audio_codec_i2s_cfg_t i2s_config{};
     i2s_config.port = config_.i2s_port;
     i2s_config.tx_handle = tx_;
+    i2s_config.rx_handle = rx_;
     data_if_ = audio_codec_new_i2s_data(&i2s_config);
     gpio_if_ = audio_codec_new_gpio();
     if (data_if_ == nullptr || gpio_if_ == nullptr) {
@@ -250,7 +272,7 @@ esp_err_t I2sCodecAudioSink::Initialize() {
         return FailInitialization(ESP_FAIL);
     }
     esp_codec_dev_cfg_t device_config{};
-    device_config.dev_type = ESP_CODEC_DEV_TYPE_OUT;
+    device_config.dev_type = HasInput() ? ESP_CODEC_DEV_TYPE_IN_OUT : ESP_CODEC_DEV_TYPE_OUT;
     device_config.codec_if = codec_if_;
     device_config.data_if = data_if_;
     codec_ = esp_codec_dev_new(&device_config);
@@ -271,6 +293,13 @@ esp_err_t I2sCodecAudioSink::Initialize() {
         return FailInitialization(status);
     }
     output_enabled_ = true;
+    if (rx_ != nullptr) {
+        status = i2s_channel_enable(rx_);
+        if (status != ESP_OK) {
+            return FailInitialization(status);
+        }
+        input_enabled_ = true;
+    }
     if (esp_codec_dev_open(codec_, &sample_config) != ESP_CODEC_DEV_OK) {
         return FailInitialization(ESP_FAIL);
     }
@@ -279,13 +308,46 @@ esp_err_t I2sCodecAudioSink::Initialize() {
         esp_codec_dev_set_out_mute(codec_, true) != ESP_CODEC_DEV_OK) {
         return FailInitialization(ESP_FAIL);
     }
+    if (HasInput() && esp_codec_dev_set_in_gain(codec_, config_.input_gain_db) != ESP_CODEC_DEV_OK) {
+        return FailInitialization(ESP_FAIL);
+    }
     status = SetAmplifier(false);
     if (status != ESP_OK || data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, false) != ESP_CODEC_DEV_OK) {
         return FailInitialization(status == ESP_OK ? ESP_FAIL : status);
     }
     output_enabled_ = false;
-    ESP_LOGI(config_.log_tag, "%s ready at I2C 0x%02x, %lu Hz %s I2S", config_.name, config_.codec_i2c_address,
-             static_cast<unsigned long>(config_.sample_rate), config_.output_channels == 1U ? "mono" : "stereo");
+    if (HasInput()) {
+        if (data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_IN, false) != ESP_CODEC_DEV_OK) {
+            return FailInitialization(ESP_FAIL);
+        }
+        input_enabled_ = false;
+    }
+    ready_.store(true, std::memory_order_release);
+    ESP_LOGI(config_.log_tag, "%s ready at I2C 0x%02x, %lu Hz %s I2S%s", config_.name, config_.codec_i2c_address,
+             static_cast<unsigned long>(config_.sample_rate), config_.output_channels == 1U ? "mono" : "stereo",
+             HasInput() ? " + mono microphone" : "");
+    if (config_.probe_input_on_initialize && HasInput()) {
+        int16_t probe[128]{};
+        uint32_t frames_read = 0U;
+        const int32_t probe_status = Read(probe, 128U, frames_read);
+        int16_t minimum = std::numeric_limits<int16_t>::max();
+        int16_t maximum = std::numeric_limits<int16_t>::min();
+        uint32_t peak = 0U;
+        for (uint32_t frame = 0U; frame < frames_read; ++frame) {
+            minimum = probe[frame] < minimum ? probe[frame] : minimum;
+            maximum = probe[frame] > maximum ? probe[frame] : maximum;
+            const int32_t signed_sample = probe[frame];
+            const uint32_t magnitude = static_cast<uint32_t>(signed_sample < 0 ? -signed_sample : signed_sample);
+            peak = magnitude > peak ? magnitude : peak;
+        }
+        if (probe_status == MICROPIXEL_STATUS_OK && frames_read == 128U) {
+            ESP_LOGI(config_.log_tag, "microphone probe passed: frames=%lu min=%d max=%d peak=%lu",
+                     static_cast<unsigned long>(frames_read), minimum, maximum, static_cast<unsigned long>(peak));
+        } else {
+            ESP_LOGW(config_.log_tag, "microphone probe failed: status=%ld frames=%lu", static_cast<long>(probe_status),
+                     static_cast<unsigned long>(frames_read));
+        }
+    }
     return ESP_OK;
 }
 
@@ -294,7 +356,11 @@ esp_err_t I2sCodecAudioSink::Start(int32_t* scratch_frames, uint32_t frame_count
         frame_count > kMaximumChunkFrames) {
         return ESP_ERR_INVALID_STATE;
     }
+    if (!Lock(pdMS_TO_TICKS(100))) {
+        return ESP_ERR_TIMEOUT;
+    }
     if (data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, true) != ESP_CODEC_DEV_OK) {
+        Unlock();
         return ESP_FAIL;
     }
     output_enabled_ = true;
@@ -318,6 +384,7 @@ esp_err_t I2sCodecAudioSink::Start(int32_t* scratch_frames, uint32_t frame_count
         // failed Start() with Shutdown(), and esp_codec_dev_close() owns the
         // single disable transition for an opened codec.
     }
+    Unlock();
     return status;
 }
 
@@ -344,6 +411,9 @@ esp_err_t I2sCodecAudioSink::Stop() {
     if (codec_ == nullptr || data_if_ == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
+    if (!Lock(pdMS_TO_TICKS(100))) {
+        return ESP_ERR_TIMEOUT;
+    }
     const esp_err_t amplifier_status = SetAmplifier(false);
     const int mute_status = esp_codec_dev_set_out_mute(codec_, true);
     const int disable_status = data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, false);
@@ -351,12 +421,82 @@ esp_err_t I2sCodecAudioSink::Stop() {
         output_enabled_ = false;
     }
     if (amplifier_status != ESP_OK || mute_status != ESP_CODEC_DEV_OK || disable_status != ESP_CODEC_DEV_OK) {
+        Unlock();
         return ESP_FAIL;
     }
+    Unlock();
     return ESP_OK;
 }
 
+int32_t I2sCodecAudioSink::GetInfo(micropixel_audio_input_info_t& info) {
+    if (!HasInput()) {
+        return MICROPIXEL_STATUS_UNSUPPORTED;
+    }
+    info = {};
+    info.size = sizeof(info);
+    info.sample_rate = config_.sample_rate;
+    info.channels = 1U;
+    info.bits_per_sample = 16U;
+    info.max_read_frames = MICROPIXEL_AUDIO_INPUT_MAX_READ_FRAMES;
+    return MICROPIXEL_STATUS_OK;
+}
+
+int32_t I2sCodecAudioSink::Read(int16_t* mono_samples, uint32_t frame_capacity, uint32_t& frames_read) {
+    frames_read = 0U;
+    if (!HasInput()) {
+        return MICROPIXEL_STATUS_UNSUPPORTED;
+    }
+    if (mono_samples == nullptr || frame_capacity == 0U || frame_capacity > MICROPIXEL_AUDIO_INPUT_MAX_READ_FRAMES) {
+        return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+    }
+    if (!ready_.load(std::memory_order_acquire) || codec_ == nullptr || data_if_ == nullptr || rx_ == nullptr) {
+        return MICROPIXEL_STATUS_WOULD_BLOCK;
+    }
+    if (!Lock(pdMS_TO_TICKS(100))) {
+        return MICROPIXEL_STATUS_RATE_LIMITED;
+    }
+    int32_t result = MICROPIXEL_STATUS_OK;
+    // In a duplex pair ESP-IDF makes RX the slave. When playback is idle the
+    // paired master TX channel must still run so BCLK/WS/MCLK exist for the
+    // codec ADC and RX DMA. Keep an already-playing output untouched; for a
+    // capture-only read, start a muted TX clock and stop it after RX.
+    const bool started_output_clock = !output_enabled_;
+    if (started_output_clock && data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, true) != ESP_CODEC_DEV_OK) {
+        result = MICROPIXEL_STATUS_INTERNAL;
+    } else {
+        if (started_output_clock) {
+            output_enabled_ = true;
+        }
+        if (!input_enabled_ && data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_IN, true) != ESP_CODEC_DEV_OK) {
+            result = MICROPIXEL_STATUS_INTERNAL;
+        } else {
+            input_enabled_ = true;
+            const size_t bytes = static_cast<size_t>(frame_capacity) * sizeof(*mono_samples);
+            if (esp_codec_dev_read(codec_, mono_samples, static_cast<int>(bytes)) == ESP_CODEC_DEV_OK) {
+                frames_read = frame_capacity;
+            } else {
+                result = MICROPIXEL_STATUS_INTERNAL;
+            }
+            if (data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_IN, false) == ESP_CODEC_DEV_OK) {
+                input_enabled_ = false;
+            } else {
+                result = MICROPIXEL_STATUS_INTERNAL;
+            }
+        }
+    }
+    if (started_output_clock && output_enabled_) {
+        if (data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, false) == ESP_CODEC_DEV_OK) {
+            output_enabled_ = false;
+        } else {
+            result = MICROPIXEL_STATUS_INTERNAL;
+        }
+    }
+    Unlock();
+    return result;
+}
+
 void I2sCodecAudioSink::Shutdown() {
+    ready_.store(false, std::memory_order_release);
     if (config_.amplifier_enable != GPIO_NUM_NC || config_.amplifier_setter != nullptr) {
         (void)SetAmplifier(false);
     }
@@ -370,6 +510,7 @@ void I2sCodecAudioSink::Shutdown() {
             (void)esp_codec_dev_close(codec_);
             codec_opened_ = false;
             output_enabled_ = false;
+            input_enabled_ = false;
         } else if (output_enabled_ && data_if_ != nullptr &&
                    data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, false) == ESP_CODEC_DEV_OK) {
             output_enabled_ = false;
@@ -396,6 +537,14 @@ void I2sCodecAudioSink::Shutdown() {
         }
         (void)i2s_del_channel(tx_);
         tx_ = nullptr;
+    }
+    if (rx_ != nullptr) {
+        if (input_enabled_) {
+            (void)i2s_channel_disable(rx_);
+            input_enabled_ = false;
+        }
+        (void)i2s_del_channel(rx_);
+        rx_ = nullptr;
     }
     if (converted_frames_ != nullptr) {
         heap_caps_free(converted_frames_);

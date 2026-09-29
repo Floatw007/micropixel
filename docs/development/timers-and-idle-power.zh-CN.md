@@ -21,8 +21,10 @@ Function EV 保持 MIPI-DPI 点亮时，ESP-IDF 6.1 的 `dsi_dpi` lock 会让 CP
 前台显示活动后，板级控制器暂停并脱离 LVGL、删除 DPI panel/DBI IO/DSI bus，驱动释放该 lock，CPU 空闲时可降到
 40 MHz。触摸、USB 截图/输入和可见 Host/Guest 更新会受控重建 panel；30 秒状态栏兜底为 passive refresh，
 挂起后不唤醒显示。
-FreeRTOS tickless idle 已启用，所有可运行任务阻塞时可停止周期 tick。Function EV 在运行时启用 automatic light
-sleep；USB Serial/JTAG 主机连接期间由 IDF 的 `usb_serial_jtag` `NO_LIGHT_SLEEP` 锁保护，只在脱离 USB 后允许实际入睡。
+FreeRTOS tickless idle 已启用，所有可运行任务阻塞时可停止周期 tick。Function EV 在运行时配置 automatic light
+sleep，但 USB 本地控制启用期间持有板级常驻 `micropixel_usb` `NO_LIGHT_SLEEP` 锁。该保护不依赖 USB SOF，避免
+Windows 选择性挂起后 IDF connection monitor 释放自身锁、P4 进入 light sleep 并导致 COM 端口无法恢复。显示挂起、
+面板断电、tickless idle 和 40 MHz DFS 不受影响。
 
 ## 用户可配置的空闲休眠与关机
 
@@ -85,7 +87,8 @@ v2 Host settings record 保存在 `sys_store/system`；旧 v1 record 首次读�
 Remote control stream 的服务端心跳用于连接保活，不等于设备状态上报，也不触发日志采集。
 日志正文仅响应 `logs.read` 命令；状态快照不携带日志。状态刷新复用现有事件唤醒，不新增周期轮询任务。
 
-Function EV 启用 FreeRTOS tickless idle，并在板级初始化时启用受 USB 连接保护的 automatic light sleep。
+Function EV 启用 FreeRTOS tickless idle，并配置 automatic light sleep；当前 USB Serial/JTAG 本地控制为常开功能，
+板级 `NO_LIGHT_SLEEP` 锁会在其整个生命周期阻止实际 light sleep，以保证主机选择性挂起后 COM 端口仍可恢复。
 Metalio-Claw4 的显式 light sleep 仍由 Host 电源状态机编排，不能用空闲 scheduler 自行替代。
 若未来为其他板启用 automatic light sleep，Metalio-Claw4 必须验证 MIPI-DSI、PPA、PSRAM、ESP-Hosted SDIO、
 GT911 与电源键的 retention/wake；ESP-Mosaico 必须单独验证 QSPI/CO5300、native Wi-Fi、CST9217、PSRAM、POWER
@@ -107,6 +110,8 @@ switch 与 USB CDC 重枚举。各 profile 的验收不能互相替代。
 - 验证 30 s电量兜底刷新、USB/无线供电插拔即时刷新，以及 Wi-Fi 状态事件即时刷新；
 - Function EV 静置 30 s 后应记录 DPI panel 已脱离，且最终 `Mode stats` 中出现 40 MHz 驻留；随后分别用实体触摸、USB 注入
   触摸和截图恢复，确认背光只在首帧完成后打开、首次按下不丢失且画面无旧 framebuffer 内容；
+- Function EV 息屏后以及 Windows 对 USB 端口执行选择性挂起后，COM 端口应保持枚举；重新打开端口执行
+  `device status` 应成功，PM lock dump 中应持续存在 `micropixel_usb`，且 `light_sleep_counts=0`；
 - Remote Control 启用和禁用状态下分别静置 60 s，确认 `micropixel_remote` 无固定 250 ms/1 s唤醒；随后验证
   Wi-Fi 断开/恢复、远程命令、Host result、配对异步完成和 shutdown 都能立即唤醒；
 - Power Management 关闭时不应自动休眠或关机；开启后，仅在未接外部电源且达到所选空闲时间时执行板级策略；

@@ -15,6 +15,7 @@
 #include "sdk/launch_arguments.hpp"
 #include "sdk/localization.hpp"
 #include "sdk/log.hpp"
+#include "sdk/network.hpp"
 #include "sdk/power_info.hpp"
 #include "sdk/random.hpp"
 #include "sdk/resources.hpp"
@@ -63,6 +64,7 @@ class Application final {
     [[nodiscard]] constexpr Sensors sensors() const noexcept { return Sensors{Sensors::CapabilityToken{}}; }
     [[nodiscard]] constexpr Gpio gpio() const noexcept { return Gpio{Gpio::CapabilityToken{}}; }
     [[nodiscard]] constexpr Haptics haptics() const noexcept { return Haptics{Haptics::CapabilityToken{}}; }
+    [[nodiscard]] constexpr Network network() const noexcept { return Network{Network::CapabilityToken{}}; }
     [[nodiscard]] constexpr PowerInfo power_info() const noexcept { return PowerInfo{PowerInfo::CapabilityToken{}}; }
 
     template <typename Handler>

@@ -64,7 +64,9 @@ AOT_FLAG_MASK = (
 DEFAULT_AOT_TARGET = "riscv32-ilp32f"
 LAUNCH_ARGUMENT_MAX_COUNT = 16
 LAUNCH_ARGUMENT_MAX_BYTES = 512
-NETWORK_COMMANDS = frozenset({"device", "firmware", "app", "artifact", "logs", "screenshot", "input", "job"})
+NETWORK_COMMANDS = frozenset({"device", "firmware", "app", "artifact", "logs", "screenshot", "input", "job", "terminal"})
+TERMINAL_PROFILE_HEADER = struct.Struct("<IHHQHHHH")
+TERMINAL_PROFILE_MAGIC = 0x31544E4D
 ALL_API_SCOPES = (
     "device:read",
     "device:manage",
@@ -929,6 +931,100 @@ class UsbControlClient:
             "result": {"message": fields[1], "appId": details["appId"], "sizeBytes": len(data)},
             "transport": "usb",
         }
+
+    def configure_terminal(
+        self,
+        origin: str,
+        ca_path: Path,
+        token_path: Path,
+        store_id: int,
+        app_id: str,
+    ) -> dict[str, Any]:
+        try:
+            origin_bytes = origin.encode("ascii")
+            app_id_bytes = app_id.encode("ascii")
+        except UnicodeEncodeError as error:
+            raise CliError("Terminal origin and App ID must be ASCII") from error
+        ca_bytes = ca_path.read_bytes()
+        token_bytes = token_path.read_bytes().strip()
+        if not origin.startswith("https://") or origin.endswith("/") or len(origin_bytes) > 256:
+            raise CliError("Terminal origin must be an HTTPS origin without a trailing slash")
+        if not re.fullmatch(rb"[A-Za-z0-9._-]+", app_id_bytes) or len(app_id_bytes) > 64:
+            raise CliError("Terminal App ID may contain only A-Z, a-z, 0-9, '.', '_' and '-'")
+        if not (1 <= len(ca_bytes) <= 4096):
+            raise CliError("Terminal CA file must contain 1-4096 bytes")
+        if not (1 <= len(token_bytes) <= 1024) or any(value < 0x21 or value > 0x7E for value in token_bytes):
+            raise CliError("Terminal token file must contain one printable ASCII token of at most 1024 bytes")
+        blob = TERMINAL_PROFILE_HEADER.pack(
+            TERMINAL_PROFILE_MAGIC,
+            1,
+            0,
+            store_id,
+            len(origin_bytes),
+            len(ca_bytes),
+            len(token_bytes),
+            len(app_id_bytes),
+        ) + origin_bytes + ca_bytes + token_bytes + app_id_bytes
+        digest = hashlib.sha256(blob).hexdigest()
+        request_id = self._allocate_request_id()
+        self._send(request_id, "TERMINAL_CONFIGURE_BEGIN", f"{len(blob)} {digest}")
+        ready = self._read_response(request_id, self.timeout)
+        fields = ready.split()
+        if len(fields) != 2 or fields[0] != "TERMINAL_CONFIG_READY":
+            raise CliError(f"Device rejected the terminal configuration session: {ready}")
+        chunk_size = min(self.CHUNK_SIZE, int(fields[1]))
+        try:
+            for offset in range(0, len(blob), chunk_size):
+                chunk = blob[offset : offset + chunk_size]
+                self._send(
+                    request_id,
+                    "TERMINAL_CONFIGURE_CHUNK",
+                    f"{offset} {base64.b64encode(chunk).decode('ascii')}",
+                )
+                acknowledgment = self._read_response(request_id, self.timeout)
+                if acknowledgment != f"TERMINAL_CONFIG_CHUNK {offset + len(chunk)}":
+                    raise CliError(f"Device acknowledged an unexpected terminal configuration offset: {acknowledgment}")
+            self._send(request_id, "TERMINAL_CONFIGURE_COMMIT")
+            completed = self._read_response(request_id, self.timeout)
+        except Exception:
+            try:
+                self._send(request_id, "TERMINAL_CONFIGURE_ABORT")
+            except Exception:
+                pass
+            raise
+        if completed != "TERMINAL_CONFIGURED":
+            raise CliError(f"Device returned an unexpected terminal configuration result: {completed}")
+        return self.terminal_status()
+
+    def terminal_status(self) -> dict[str, Any]:
+        fields = self.request("TERMINAL_STATUS").split()
+        if len(fields) != 8 or fields[0] != "TERMINAL_STATUS":
+            raise CliError("Device returned a malformed terminal status")
+        try:
+            configured = fields[1] == "1"
+            origin = "" if fields[4] == "-" else base64.b64decode(fields[4], validate=True).decode("ascii")
+            app_id = "" if fields[5] == "-" else base64.b64decode(fields[5], validate=True).decode("ascii")
+            revision = int(fields[2])
+            store_id = int(fields[3])
+        except (ValueError, UnicodeDecodeError) as error:
+            raise CliError("Device returned an invalid terminal status") from error
+        return {
+            "configured": configured,
+            "revision": revision,
+            "storeId": store_id,
+            "origin": origin or None,
+            "allowedAppId": app_id or None,
+            "certificateFingerprint": None if fields[6] == "-" else fields[6],
+            "tokenSuffix": None if fields[7] == "-" else fields[7],
+            "transport": "usb",
+            "port": self.port,
+        }
+
+    def clear_terminal(self) -> dict[str, Any]:
+        detail = self.request("TERMINAL_CLEAR")
+        if detail != "TERMINAL_CLEARED":
+            raise CliError(f"Device returned an unexpected terminal clear result: {detail}")
+        return self.terminal_status()
 
 
 def list_local_ports(include_all: bool = False, probe_timeout: float = 2.0) -> dict[str, Any]:
@@ -1850,6 +1946,7 @@ def _run_build_sources(args: argparse.Namespace) -> None:
             root / "guest/runtime/panic.cpp",
             root / "guest/runtime/system.cpp",
             root / "guest/runtime/storage.cpp",
+            root / "guest/runtime/network.cpp",
             root / "guest/runtime/audio.cpp",
             root / "guest/runtime/timers.cpp",
             root / "guest/runtime/devices.cpp",
@@ -3359,6 +3456,20 @@ def execute_usb(args: argparse.Namespace, client: UsbControlClient) -> None:
         print_json(client.firmware_status())
     elif args.command == "firmware" and args.firmware_command == "update":
         print_json(client.action("FIRMWARE_UPDATE"))
+    elif args.command == "terminal" and args.terminal_command == "configure":
+        print_json(
+            client.configure_terminal(
+                args.origin,
+                Path(args.ca_file),
+                Path(args.token_file),
+                args.store_id,
+                args.app_id,
+            )
+        )
+    elif args.command == "terminal" and args.terminal_command == "status":
+        print_json(client.terminal_status())
+    elif args.command == "terminal" and args.terminal_command == "clear":
+        print_json(client.clear_terminal())
     else:
         suffix = getattr(args, "app_command", getattr(args, "device_command", ""))
         raise CliError(f"{args.command} {suffix}".strip() + " is not available over USB")
@@ -3469,6 +3580,17 @@ def parser() -> argparse.ArgumentParser:
     diagnostics = device_modes.add_parser("diagnostics", help="Refresh hardware, memory, task, and runtime details")
     diagnostics.add_argument("--cached", action="store_true", help="Read the last snapshot without refreshing the device")
     reboot = device_modes.add_parser("reboot", help="Reboot the device")
+
+    terminal = commands.add_parser("terminal", help="Provision the authenticated merchant terminal profile over USB")
+    terminal_modes = terminal.add_subparsers(dest="terminal_command", required=True)
+    terminal_configure = terminal_modes.add_parser("configure", help="Install HTTPS origin, CA, token, store, and App authorization")
+    terminal_configure.add_argument("--origin", required=True, help="Java HTTPS origin without a trailing slash")
+    terminal_configure.add_argument("--ca-file", required=True, help="PEM CA certificate file")
+    terminal_configure.add_argument("--token-file", required=True, help="Bearer token file; never printed or placed in the command line")
+    terminal_configure.add_argument("--store-id", required=True, type=non_negative_int)
+    terminal_configure.add_argument("--app-id", default="canteen.merchant-terminal")
+    terminal_modes.add_parser("status", help="Show non-secret terminal configuration status")
+    terminal_modes.add_parser("clear", help="Erase the terminal authentication profile")
 
     port = commands.add_parser("port", help="Discover local serial ports and MicroPixel hardware")
     port_modes = port.add_subparsers(dest="port_command", required=True)
@@ -3612,7 +3734,7 @@ def parser() -> argparse.ArgumentParser:
 
 def resolve_transport(args: argparse.Namespace) -> argparse.Namespace:
     if args.transport is None:
-        if args.port:
+        if args.port or args.command == "terminal":
             args.transport = "usb"
         else:
             args.transport = os.environ.get("MICROPIXEL_TRANSPORT", "remote")

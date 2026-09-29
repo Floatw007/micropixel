@@ -30,6 +30,8 @@ GuestContext::GuestContext(const micropixel_aot_package_t& package, device::Devi
       sensors_(devices_.sensors(), timers_),
       gpio_(devices_.gpio(), events_, timers_),
       haptics_(devices_.haptics(), events_, timers_),
+      network_(devices_.managed_network(), events_, timers_,
+               reinterpret_cast<const char*>(package.app_id)),
       resources_(package, background_executor, devices_.graphics()),
       audio_playback_(package, devices_.audio(), events_, clock_origin_us_),
       pcm_stream_(devices_.audio(), events_, clock_origin_us_),
@@ -55,9 +57,10 @@ GuestContext::GuestContext(const micropixel_aot_package_t& package, device::Devi
       gpio_endpoint_(*this),
       haptics_endpoint_(*this),
       power_info_endpoint_(*this),
+      network_endpoint_(*this),
       service_registry_(timer_endpoint_, system_endpoint_, storage_endpoint_, resource_endpoint_, random_endpoint_,
                         graphics_endpoint_, input_endpoint_, audio_endpoint_, devices_endpoint_, sensors_endpoint_,
-                        gpio_endpoint_, haptics_endpoint_, power_info_endpoint_) {
+                        gpio_endpoint_, haptics_endpoint_, power_info_endpoint_, network_endpoint_) {
     (void)std::snprintf(app_id_.data(), app_id_.size(), "%s", reinterpret_cast<const char*>(package.app_id));
     const auto audio_result = devices_.audio().ResumeAll();
     audio_foreground_ready_ = audio_result || audio_result.error().status == MICROPIXEL_STATUS_UNSUPPORTED;
@@ -80,6 +83,7 @@ GuestContext::~GuestContext() {
     raster_.Shutdown();
     micropixel_check_heap("direct surface and raster shutdown");
     events_.Close();
+    network_.Shutdown();
     key_events_.Shutdown();
     touch_events_.Shutdown();
     sensors_.Shutdown();
@@ -121,11 +125,13 @@ bool GuestContext::Suspend(TickType_t timeout) {
     sensors_.Suspend();
     gpio_.Suspend();
     haptics_.Suspend();
+    network_.Suspend();
     const bool timers_suspended = timers_.Suspend();
     auto audio_result = devices_.audio().SuspendAll();
     const bool audio_suspended = audio_result || audio_result.error().status == MICROPIXEL_STATUS_UNSUPPORTED;
     if (!timers_suspended || !audio_suspended || !events_.Suspend(timeout)) {
         (void)timers_.Resume();
+        (void)network_.Resume();
         (void)devices_.audio().ResumeAll();
         (void)sensors_.Resume();
         (void)gpio_.Resume();
@@ -154,9 +160,10 @@ bool GuestContext::Resume() {
         return false;
     }
     const bool timers_resumed = timers_.Resume();
+    const bool network_resumed = network_.Resume();
     auto audio_result = devices_.audio().ResumeAll();
     const bool audio_resumed = audio_result || audio_result.error().status == MICROPIXEL_STATUS_UNSUPPORTED;
-    if (!timers_resumed || !audio_resumed) {
+    if (!timers_resumed || !audio_resumed || !network_resumed) {
         // Wake the safe point even on failure. AppController immediately
         // requests stop, and a blocked Guest must be allowed to observe it.
         events_.Resume();
@@ -186,6 +193,7 @@ bool GuestContext::RequestStop() {
     sensors_.Suspend();
     gpio_.Suspend();
     haptics_.Suspend();
+    network_.Suspend();
     (void)timers_.Suspend();
     (void)devices_.audio().SuspendAll();
     micropixel_event_t stop_event{};
@@ -208,6 +216,7 @@ void GuestContext::ForceStop() {
     sensors_.Suspend();
     gpio_.Suspend();
     haptics_.Suspend();
+    network_.Suspend();
     (void)timers_.Suspend();
     (void)devices_.audio().SuspendAll();
     events_.Close();

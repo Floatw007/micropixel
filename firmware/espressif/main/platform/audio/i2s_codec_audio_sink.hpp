@@ -1,15 +1,19 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 
 #include "audio_codec_ctrl_if.h"
 #include "audio_codec_data_if.h"
 #include "audio_codec_gpio_if.h"
 #include "audio_codec_if.h"
+#include "device/contracts/audio_input.hpp"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "platform/audio/audio_output_peripheral.hpp"
 
 namespace micropixel::platform::buses {
@@ -29,6 +33,7 @@ struct I2sCodecAudioConfig final {
     gpio_num_t bit_clock{GPIO_NUM_NC};
     gpio_num_t word_select{GPIO_NUM_NC};
     gpio_num_t data_out{GPIO_NUM_NC};
+    gpio_num_t data_in{GPIO_NUM_NC};
     gpio_num_t amplifier_enable{GPIO_NUM_NC};
     AmplifierSetter amplifier_setter{};
     void* amplifier_context{};
@@ -40,16 +45,18 @@ struct I2sCodecAudioConfig final {
     uint32_t dma_descriptor_count{6U};
     uint32_t dma_frame_count{240U};
     uint8_t output_channels{2U};
+    float input_gain_db{24.0F};
     bool amplifier_active_low{};
     // Always-on boards can reject a missing codec before publishing audio.
     // Power-gated boards leave this false and probe when the rail is enabled.
     bool probe_before_attach{};
+    bool probe_input_on_initialize{};
 };
 
 // Shared transport and lifecycle base for register-controlled I2S codecs.
 // Concrete codecs only create their codec interface; this class owns I2C
 // serialization, I2S DMA, sample conversion and esp_codec_dev lifetime.
-class I2sCodecAudioSink : public AudioOutputPeripheral {
+class I2sCodecAudioSink : public AudioOutputPeripheral, public device::AudioInput {
    public:
     explicit I2sCodecAudioSink(I2sCodecAudioConfig config) : config_(config) {}
 
@@ -61,6 +68,8 @@ class I2sCodecAudioSink : public AudioOutputPeripheral {
     void Shutdown() override;
     [[nodiscard]] const char* Name() const override { return config_.name; }
     [[nodiscard]] uint32_t SampleRate() const override { return config_.sample_rate; }
+    [[nodiscard]] int32_t GetInfo(micropixel_audio_input_info_t& info) override;
+    [[nodiscard]] int32_t Read(int16_t* mono_samples, uint32_t frame_capacity, uint32_t& frames_read) override;
 
    protected:
     [[nodiscard]] virtual const audio_codec_if_t* CreateCodec(const audio_codec_ctrl_if_t* control,
@@ -82,6 +91,9 @@ class I2sCodecAudioSink : public AudioOutputPeripheral {
     [[nodiscard]] int AmplifierLevel(bool enabled) const;
     [[nodiscard]] esp_err_t SetAmplifier(bool enabled) const;
     [[nodiscard]] esp_err_t FailInitialization(esp_err_t status);
+    [[nodiscard]] bool HasInput() const { return config_.data_in != GPIO_NUM_NC; }
+    [[nodiscard]] bool Lock(TickType_t timeout = portMAX_DELAY) const;
+    void Unlock() const;
     static CodecControl& Control(const audio_codec_ctrl_if_t* interface);
     static int ControlOpen(const audio_codec_ctrl_if_t* interface, void*, int);
     static bool ControlIsOpen(const audio_codec_ctrl_if_t* interface);
@@ -93,13 +105,18 @@ class I2sCodecAudioSink : public AudioOutputPeripheral {
     CodecControl control_{};
     i2c_master_dev_handle_t codec_i2c_{};
     i2s_chan_handle_t tx_{};
+    i2s_chan_handle_t rx_{};
     const audio_codec_data_if_t* data_if_{};
     const audio_codec_gpio_if_t* gpio_if_{};
     const audio_codec_if_t* codec_if_{};
     esp_codec_dev_handle_t codec_{};
     bool codec_opened_{};
     bool output_enabled_{};
+    bool input_enabled_{};
     int16_t* converted_frames_{};
+    mutable StaticSemaphore_t codec_mutex_storage_{};
+    mutable SemaphoreHandle_t codec_mutex_{};
+    std::atomic<bool> ready_{};
 };
 
 }  // namespace micropixel::platform::audio

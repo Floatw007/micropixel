@@ -84,6 +84,9 @@ build_and_run linear_memory_policy "$workspace_root/tools/tests/test_linear_memo
 
 build_and_run_c app_requirements -I "$test_output_dir" "$workspace_root/tools/tests/test_app_requirements.c"
 
+build_and_run network_policy "$workspace_root/tools/tests/test_network_policy.cpp"
+build_and_run json_reader -I "$workspace_root/guest" "$workspace_root/tools/tests/test_json_reader.cpp"
+
 build_and_run maze_touch_controls \
     "$workspace_root/tools/tests/test_maze_touch_controls.cpp"
 

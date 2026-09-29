@@ -1,6 +1,7 @@
 #pragma once
 
 #include "device/contracts/audio.hpp"
+#include "device/contracts/audio_input.hpp"
 #include "device/contracts/battery.hpp"
 #include "device/contracts/graphics.hpp"
 #include "device/contracts/input.hpp"
@@ -95,6 +96,18 @@ class UnavailableAudio final : public device::Audio {
     [[nodiscard]] int32_t StopAll() override { return MICROPIXEL_STATUS_UNSUPPORTED; }
     [[nodiscard]] int32_t SuspendAll() override { return MICROPIXEL_STATUS_UNSUPPORTED; }
     [[nodiscard]] int32_t ResumeAll() override { return MICROPIXEL_STATUS_UNSUPPORTED; }
+};
+
+class UnavailableAudioInput final : public device::AudioInput {
+   public:
+    [[nodiscard]] int32_t GetInfo(micropixel_audio_input_info_t& info) override {
+        info = {};
+        return MICROPIXEL_STATUS_UNSUPPORTED;
+    }
+    [[nodiscard]] int32_t Read(int16_t*, uint32_t, uint32_t& frames_read) override {
+        frames_read = 0U;
+        return MICROPIXEL_STATUS_UNSUPPORTED;
+    }
 };
 
 class UnavailableInput final : public device::Input {

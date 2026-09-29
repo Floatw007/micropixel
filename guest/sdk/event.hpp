@@ -16,6 +16,7 @@ class GpioInput;
 class Haptic;
 class DirectSurface;
 class PcmStream;
+class NetworkRequest;
 
 enum class EventType : uint16_t {
     kUnknown,
@@ -33,6 +34,7 @@ enum class EventType : uint16_t {
     kPcmStreamLowWater,
     // Input 1.1: analog gamepad axis.
     kAxis,
+    kNetworkComplete,
 };
 
 enum class TouchPhase : uint8_t {
@@ -316,6 +318,39 @@ class SurfaceReleasedEvent final {
     friend class DirectSurface;
 };
 
+class NetworkCompleteEvent final {
+   public:
+    [[nodiscard]] constexpr uint32_t request_handle() const { return request_handle_; }
+    [[nodiscard]] constexpr int32_t transport_status() const { return transport_status_; }
+    [[nodiscard]] constexpr uint32_t body_length() const { return body_length_; }
+    [[nodiscard]] constexpr uint16_t http_status() const { return http_status_; }
+    [[nodiscard]] constexpr uint8_t source() const { return source_; }
+    [[nodiscard]] constexpr uint32_t cache_age_seconds() const { return cache_age_seconds_; }
+    [[nodiscard]] constexpr bool transport_succeeded() const { return transport_status_ == 0; }
+
+   private:
+    constexpr NetworkCompleteEvent(TimePoint timestamp, uint32_t request_handle, int32_t transport_status,
+                                   uint32_t body_length, uint16_t http_status, uint8_t source,
+                                   uint32_t cache_age_seconds)
+        : timestamp_(timestamp),
+          request_handle_(request_handle),
+          transport_status_(transport_status),
+          body_length_(body_length),
+          http_status_(http_status),
+          source_(source),
+          cache_age_seconds_(cache_age_seconds) {}
+
+    TimePoint timestamp_{};
+    uint32_t request_handle_{};
+    int32_t transport_status_{};
+    uint32_t body_length_{};
+    uint16_t http_status_{};
+    uint8_t source_{};
+    uint32_t cache_age_seconds_{};
+    friend class Application;
+    friend class Event;
+};
+
 class Event final {
    public:
     constexpr Event() = default;
@@ -338,6 +373,7 @@ class Event final {
     [[nodiscard]] constexpr const TouchEvent* touch() const { return type_ == EventType::kTouch ? &touch_ : nullptr; }
     [[nodiscard]] constexpr const KeyEvent* key() const { return type_ == EventType::kKey ? &key_ : nullptr; }
     [[nodiscard]] constexpr const AxisEvent* axis() const { return type_ == EventType::kAxis ? &axis_ : nullptr; }
+    [[nodiscard]] const NetworkCompleteEvent* NetworkFrom(const NetworkRequest& source) const;
     // True when the Runtime-owned gamepad (Application::gamepad()) took this
     // touch, key or axis before it reached the App; UI code skips such events.
     [[nodiscard]] constexpr bool gamepad_handled() const { return gamepad_handled_; }
@@ -361,6 +397,9 @@ class Event final {
     }
     [[nodiscard]] constexpr const PcmStreamEvent* pcm_stream() const {
         return type_ == EventType::kPcmStreamLowWater ? &pcm_stream_ : nullptr;
+    }
+    [[nodiscard]] constexpr const NetworkCompleteEvent* network_complete() const {
+        return type_ == EventType::kNetworkComplete ? &network_complete_ : nullptr;
     }
 
     explicit constexpr Event(TimePoint timestamp) : type_(EventType::kUnknown), timestamp_(timestamp) {}
@@ -395,6 +434,9 @@ class Event final {
     explicit constexpr Event(PcmStreamEvent low_water)
         : type_(EventType::kPcmStreamLowWater), timestamp_(low_water.timestamp()), pcm_stream_(low_water) {}
 
+    explicit constexpr Event(NetworkCompleteEvent complete)
+        : type_(EventType::kNetworkComplete), timestamp_(complete.timestamp_), network_complete_(complete) {}
+
     EventType type_{EventType::kUnknown};
     TimePoint timestamp_{};
     TimerEvent timer_{};
@@ -407,6 +449,7 @@ class Event final {
     HapticEvent haptic_{};
     SurfaceReleasedEvent surface_released_{};
     PcmStreamEvent pcm_stream_{};
+    NetworkCompleteEvent network_complete_{TimePoint{}, 0U, 0, 0U, 0U, 0U, 0U};
     bool gamepad_handled_{};
     friend class Application;
 };

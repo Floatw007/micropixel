@@ -16,6 +16,8 @@
 #include "sdk/launch_arguments.hpp"
 #include "sdk/localization.hpp"
 #include "sdk/math.hpp"
+#include "sdk/network.hpp"
+#include "sdk/json_reader.hpp"
 #include "sdk/panic.hpp"
 #include "sdk/power_info.hpp"
 #include "sdk/random.hpp"

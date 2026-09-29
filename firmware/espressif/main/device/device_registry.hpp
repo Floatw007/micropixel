@@ -24,6 +24,7 @@ class DeviceRegistry final : public DeviceCatalog, public Sensors, public Gpio, 
     [[nodiscard]] bool RegisterDisplay(const char* name = "Built-in display");
     [[nodiscard]] bool RegisterTouch(const char* name = "Built-in touchscreen");
     [[nodiscard]] bool RegisterAudioOutput(const char* name = "Built-in speaker");
+    [[nodiscard]] bool RegisterAudioInput(const char* name = "Built-in microphone");
     [[nodiscard]] bool RegisterPower(const char* name = "System power");
     [[nodiscard]] bool RegisterSensor(SensorPeripheral& peripheral, PeripheralChannelId channel, const char* name);
     [[nodiscard]] bool RegisterGpio(GpioPeripheral& peripheral, PeripheralChannelId channel, const char* name);

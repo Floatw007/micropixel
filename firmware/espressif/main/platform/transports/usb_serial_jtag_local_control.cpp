@@ -7,9 +7,6 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_private/log_lock.h"
-#ifdef CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
-#include "freertos/idf_additions.h"
-#endif
 #include "work/task_policy.hpp"
 
 namespace micropixel::platform::transports {
@@ -18,8 +15,9 @@ namespace {
 constexpr char kTag[] = "usb_local_control";
 constexpr char kProtocolPrefix[] = "MPX1 ";
 // APP_LIST serializes a catalog page through mbedTLS Base64 before it is
-// copied into the fixed response queue. The task never owns a flash operation,
-// so both its large stack and command workspace can stay in PSRAM.
+// copied into the fixed response queue. The command workspace stays in PSRAM,
+// but the task stack must stay in internal SRAM: terminal provisioning commits
+// credentials to NVS, and ESP-IDF disables the flash/PSRAM cache while writing.
 constexpr uint32_t kTaskStackSize = 10U * 1024U;
 constexpr BaseType_t kTaskCore = task_policy::kSystemCore;
 
@@ -49,14 +47,8 @@ esp_err_t UsbSerialJtagLocalControl::Start(DevelopmentCommandSink development_si
             return status;
         }
     }
-#ifdef CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
-    const BaseType_t task_created = xTaskCreatePinnedToCoreWithCaps(TaskEntry, "micropixel_usb", kTaskStackSize, this,
-                                                                    task_policy::kUsbLocalControlPriority, &task_,
-                                                                    kTaskCore, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
     const BaseType_t task_created = xTaskCreatePinnedToCore(TaskEntry, "micropixel_usb", kTaskStackSize, this,
                                                             task_policy::kUsbLocalControlPriority, &task_, kTaskCore);
-#endif
     if (task_created != pdPASS) {
         return ESP_ERR_NO_MEM;
     }

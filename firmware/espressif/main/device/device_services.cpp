@@ -336,6 +336,19 @@ DeviceResult<void> AudioService::SuspendAll() const { return StatusResult(implem
 
 DeviceResult<void> AudioService::ResumeAll() const { return StatusResult(implementation_.ResumeAll()); }
 
+DeviceResult<micropixel_audio_input_info_t> AudioInputService::GetInfo() const {
+    micropixel_audio_input_info_t info{};
+    const int32_t status = implementation_.GetInfo(info);
+    return status == MICROPIXEL_STATUS_OK ? DeviceResult<micropixel_audio_input_info_t>{info}
+                                          : Fail<micropixel_audio_input_info_t>(status);
+}
+
+DeviceResult<uint32_t> AudioInputService::Read(int16_t* mono_samples, uint32_t frame_capacity) const {
+    uint32_t frames_read = 0U;
+    const int32_t status = implementation_.Read(mono_samples, frame_capacity, frames_read);
+    return status == MICROPIXEL_STATUS_OK ? DeviceResult<uint32_t>{frames_read} : Fail<uint32_t>(status);
+}
+
 DeviceResult<uint32_t> RandomService::U32() const {
     uint32_t value = 0U;
     int32_t status = implementation_.GetU32(value);

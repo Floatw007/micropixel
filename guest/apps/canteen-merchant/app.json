@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "app_id": "canteen.merchant-terminal",
+  "version": "0.2.0",
+  "threading": "none",
+  "title": {
+    "default": "zh-CN",
+    "values": {
+      "zh-CN": "食堂商家终端",
+      "en": "Canteen Terminal"
+    }
+  },
+  "sources": ["main.cpp"],
+  "requirements": {
+    "schema_version": 1,
+    "display": {
+      "layouts": ["landscape"],
+      "min_width": 1024,
+      "min_height": 600
+    },
+    "required": ["input.touch"],
+    "optional": [],
+    "any_of": [],
+    "services": {"network": 65536},
+    "system_font": "zh-CN"
+  }
+}

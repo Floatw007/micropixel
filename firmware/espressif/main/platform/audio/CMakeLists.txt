@@ -3,7 +3,7 @@ list(APPEND micropixel_sources
     "platform/audio/audio_mixer.cpp"
 )
 
-if(IDF_TARGET STREQUAL "esp32s31" OR IDF_TARGET STREQUAL "esp32s3")
+if(IDF_TARGET STREQUAL "esp32p4" OR IDF_TARGET STREQUAL "esp32s31" OR IDF_TARGET STREQUAL "esp32s3")
     list(APPEND micropixel_sources
         "platform/audio/aw88298_i2s_audio_sink.cpp"
         "platform/audio/es8311_i2s_audio_sink.cpp"

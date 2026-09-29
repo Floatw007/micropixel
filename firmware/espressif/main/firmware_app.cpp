@@ -20,6 +20,7 @@
 #include "host/ui/system_shell.hpp"
 #include "nvs_flash.h"
 #include "platform/network/network_route_source.hpp"
+#include "platform/network/managed_http_client.hpp"
 #if !CONFIG_MICROPIXEL_BOARD_NULL
 #include "platform/lvgl/fonts/system_fonts.hpp"
 #endif
@@ -56,8 +57,7 @@ void PrepareOwnedAppStorage(runtime::BundleFs& store, const char* role, bool rem
         }
     }
     if (error != BUNDLEFS_OK) {
-        ESP_LOGE(kTag,
-                 "%s is not ready (BundleFS error %d)%s", role, static_cast<int>(error),
+        ESP_LOGE(kTag, "%s is not ready (BundleFS error %d)%s", role, static_cast<int>(error),
                  removable ? "; format it from System Settings" : "");
     }
 }
@@ -112,14 +112,17 @@ void FirmwareApp::Run() {
     static MICROPIXEL_EXT_RAM_BSS host::network::NetworkController network(wifi, *services.cellular, network_routes);
     static MICROPIXEL_EXT_RAM_BSS host::network::NetworkMaintenance network_maintenance(network);
     if (!network_maintenance.Start()) ESP_LOGE(kTag, "network maintenance timer unavailable");
+    static MICROPIXEL_EXT_RAM_BSS platform::network::ManagedHttpClient managed_network(network);
+    if (!managed_network.valid()) ESP_LOGE(kTag, "managed Guest network service is unavailable");
 
     // These composition-root objects live for the lifetime of the firmware.
     // Keep them out of app_main's bounded stack and, on PSRAM boards, out of
     // internal SRAM: RemoteControlAgent owns several fixed-capacity protocol
     // buffers even when remote control is disabled.
     static MICROPIXEL_EXT_RAM_BSS device::DeviceServices devices(
-        *services.graphics, services.board_info.display, *services.input, *services.audio, *services.random,
-        *services.devices, *services.sensors, *services.gpio, *services.haptics, *services.battery);
+        *services.graphics, services.board_info.display, *services.input, *services.audio, *services.audio_input,
+        *services.random, *services.devices, *services.sensors, *services.gpio, *services.haptics, *services.battery,
+        managed_network);
     logging::SystemLogBuffer& system_logs = logging::SystemLogs();
     static MICROPIXEL_EXT_RAM_BSS control::ControlDispatcher controls(
         [](void* context, const char* app_id) {
@@ -129,7 +132,7 @@ void FirmwareApp::Run() {
     static MICROPIXEL_EXT_RAM_BSS remote_control::RemoteControlAgent remote_control(
         network, services.board_info, controls, system_logs, shell.SupportsScreenCapture());
     static MICROPIXEL_EXT_RAM_BSS local_control::LocalControlAgent local_control(
-        *services.local_control, controls, system_logs, services.board_info, network);
+        *services.local_control, controls, system_logs, services.board_info, network, managed_network);
     if (!local_control.Start()) {
         ESP_LOGW(kTag, "local control is unavailable for this boot");
     }

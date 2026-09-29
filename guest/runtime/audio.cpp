@@ -44,7 +44,59 @@ Result<AudioInfo> Audio::info() const {
         (raw.capabilities & MICROPIXEL_AUDIO_CAPABILITY_OGG_OPUS) != 0U,
         pcm_streams ? raw.max_pcm_streams : static_cast<uint16_t>(0U),
         pcm_streams,
+        (raw.capabilities & MICROPIXEL_AUDIO_CAPABILITY_INPUT_PCM) != 0U,
     };
+}
+
+Result<AudioInputInfo> Audio::input_info() const {
+    micropixel_audio_input_info_t raw{};
+    int32_t status = OpenService(audio_service, MICROPIXEL_SERVICE_AUDIO, MICROPIXEL_AUDIO_INTERFACE_MAJOR, 1U);
+    uint32_t response_size = 0U;
+    if (status == MICROPIXEL_STATUS_OK) {
+        status = CallService(audio_service, MICROPIXEL_AUDIO_METHOD_INPUT_GET_INFO, nullptr, 0U, &raw, sizeof(raw),
+                             response_size);
+    }
+    if (status != MICROPIXEL_STATUS_OK) {
+        return unexpected(ErrorFromStatus(status));
+    }
+    if (response_size != sizeof(raw) || raw.size != sizeof(raw) || raw.sample_rate == 0U || raw.channels != 1U ||
+        raw.bits_per_sample != 16U || raw.max_read_frames == 0U ||
+        raw.max_read_frames > MICROPIXEL_AUDIO_INPUT_MAX_READ_FRAMES) {
+        runtime::Panic("audio.input_info.response", MICROPIXEL_STATUS_INTERNAL);
+    }
+    return AudioInputInfo{raw.sample_rate, raw.channels, raw.bits_per_sample, raw.max_read_frames};
+}
+
+Result<uint32_t> Audio::ReadInput(int16_t* mono_samples, uint32_t frame_capacity) const {
+    if (mono_samples == nullptr || frame_capacity == 0U || frame_capacity > MICROPIXEL_AUDIO_INPUT_MAX_READ_FRAMES) {
+        return unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    micropixel_audio_input_read_request_t request{};
+    request.size = sizeof(request);
+    request.frame_count = frame_capacity;
+    alignas(4) uint8_t response[sizeof(micropixel_audio_input_read_response_t) +
+                                MICROPIXEL_AUDIO_INPUT_MAX_READ_FRAMES * sizeof(int16_t)]{};
+    uint32_t response_size = 0U;
+    int32_t status = OpenService(audio_service, MICROPIXEL_SERVICE_AUDIO, MICROPIXEL_AUDIO_INTERFACE_MAJOR, 1U);
+    if (status == MICROPIXEL_STATUS_OK) {
+        status = CallService(audio_service, MICROPIXEL_AUDIO_METHOD_INPUT_READ, &request, sizeof(request), response,
+                             sizeof(response), response_size);
+    }
+    if (status != MICROPIXEL_STATUS_OK) {
+        return unexpected(ErrorFromStatus(status));
+    }
+    micropixel_audio_input_read_response_t header{};
+    if (response_size < sizeof(header)) {
+        runtime::Panic("audio.input_read.response", MICROPIXEL_STATUS_INTERNAL);
+    }
+    CopyBytes(&header, response, sizeof(header));
+    const uint32_t expected_size = static_cast<uint32_t>(sizeof(header)) + header.frame_count * sizeof(int16_t);
+    if (header.reserved0 != 0U || header.frame_count > frame_capacity || header.size != expected_size ||
+        response_size != expected_size) {
+        runtime::Panic("audio.input_read.response", MICROPIXEL_STATUS_INTERNAL);
+    }
+    CopyBytes(mono_samples, response + sizeof(header), header.frame_count * sizeof(int16_t));
+    return header.frame_count;
 }
 
 Result<void> Audio::Play(const Tone& tone) const {

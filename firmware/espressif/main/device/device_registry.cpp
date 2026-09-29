@@ -58,6 +58,10 @@ bool DeviceRegistry::RegisterAudioOutput(const char* name) {
     return Add(MICROPIXEL_DEVICE_KIND_AUDIO_OUTPUT, MICROPIXEL_DEVICE_CAP_WRITE | MICROPIXEL_DEVICE_CAP_EVENTS, name);
 }
 
+bool DeviceRegistry::RegisterAudioInput(const char* name) {
+    return Add(MICROPIXEL_DEVICE_KIND_AUDIO_INPUT, MICROPIXEL_DEVICE_CAP_READ, name);
+}
+
 bool DeviceRegistry::RegisterPower(const char* name) {
     return Add(MICROPIXEL_DEVICE_KIND_POWER, MICROPIXEL_DEVICE_CAP_READ, name);
 }

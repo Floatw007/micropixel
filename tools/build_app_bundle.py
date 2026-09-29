@@ -760,7 +760,7 @@ def parse_titles(value: object, fallback_default: object = "en") -> LocalizedTit
 
 
 CAPABILITY_NAMES = {"input.touch", "input.keys", "audio.output", "sensor.acceleration", "sensor.gyroscope", "sensor.magnetometer", "haptics", "gpio"}
-SERVICE_NAMES = {"system", "input", "graphics", "audio", "storage", "timer", "resource", "device", "sensor", "gpio", "haptics"}
+SERVICE_NAMES = {"system", "input", "graphics", "audio", "storage", "timer", "resource", "device", "sensor", "gpio", "haptics", "network"}
 
 
 def validate_requirements(value: object) -> dict:

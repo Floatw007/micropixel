@@ -29,7 +29,15 @@
 #define MICROPIXEL_RESOURCE_INTERFACE_MAJOR 1U
 #define MICROPIXEL_RESOURCE_INTERFACE_MINOR 0U
 #define MICROPIXEL_AUDIO_INTERFACE_MAJOR 1U
-#define MICROPIXEL_AUDIO_INTERFACE_MINOR 0U
+#define MICROPIXEL_AUDIO_INTERFACE_MINOR 1U
+#define MICROPIXEL_NETWORK_INTERFACE_MAJOR 1U
+#define MICROPIXEL_NETWORK_INTERFACE_MINOR 0U
+#define MICROPIXEL_NETWORK_MAX_PATH_BYTES 256U
+#define MICROPIXEL_NETWORK_MAX_BODY_BYTES 4096U
+#define MICROPIXEL_NETWORK_MAX_IDEMPOTENCY_KEY_BYTES 64U
+#define MICROPIXEL_NETWORK_MAX_READ_BYTES 4096U
+#define MICROPIXEL_NETWORK_MAX_RESPONSE_BYTES (64U * 1024U)
+#define MICROPIXEL_AUDIO_INPUT_MAX_READ_FRAMES 256U
 #define MICROPIXEL_RANDOM_INTERFACE_MAJOR 1U
 #define MICROPIXEL_RANDOM_INTERFACE_MINOR 0U
 /* Upper bound of one PCM_STREAM_WRITE request, header plus interleaved int16 samples. */
@@ -84,6 +92,7 @@ typedef uint32_t micropixel_font_handle_t;
 typedef uint32_t micropixel_audio_clip_handle_t;
 typedef uint32_t micropixel_audio_playback_handle_t;
 typedef uint32_t micropixel_audio_pcm_stream_handle_t;
+typedef uint32_t micropixel_network_request_handle_t;
 typedef uint32_t micropixel_device_id_t;
 typedef uint32_t micropixel_sensor_handle_t;
 typedef uint32_t micropixel_gpio_handle_t;
@@ -1128,12 +1137,116 @@ typedef enum micropixel_audio_method {
     MICROPIXEL_AUDIO_METHOD_PCM_STREAM_OPEN = 12,
     MICROPIXEL_AUDIO_METHOD_PCM_STREAM_WRITE = 13,
     MICROPIXEL_AUDIO_METHOD_PCM_STREAM_CLOSE = 14,
+    /* Audio 1.1: signed 16-bit mono microphone capture. */
+    MICROPIXEL_AUDIO_METHOD_INPUT_GET_INFO = 15,
+    MICROPIXEL_AUDIO_METHOD_INPUT_READ = 16,
 } micropixel_audio_method_t;
+
+typedef enum micropixel_network_method {
+    MICROPIXEL_NETWORK_METHOD_GET_INFO = 1,
+    MICROPIXEL_NETWORK_METHOD_START = 2,
+    MICROPIXEL_NETWORK_METHOD_READ = 3,
+    MICROPIXEL_NETWORK_METHOD_CANCEL = 4,
+    MICROPIXEL_NETWORK_METHOD_CLOSE = 5,
+} micropixel_network_method_t;
+
+typedef enum micropixel_network_http_method {
+    MICROPIXEL_NETWORK_HTTP_GET = 1,
+    MICROPIXEL_NETWORK_HTTP_POST = 2,
+    MICROPIXEL_NETWORK_HTTP_PUT = 3,
+    MICROPIXEL_NETWORK_HTTP_PATCH = 4,
+    MICROPIXEL_NETWORK_HTTP_DELETE = 5,
+} micropixel_network_http_method_t;
+
+typedef enum micropixel_network_cache_mode {
+    MICROPIXEL_NETWORK_CACHE_NONE = 0,
+    MICROPIXEL_NETWORK_CACHE_MEMORY_FALLBACK = 1,
+    MICROPIXEL_NETWORK_CACHE_PERSISTENT_FALLBACK = 2,
+} micropixel_network_cache_mode_t;
+
+typedef enum micropixel_network_response_source {
+    MICROPIXEL_NETWORK_RESPONSE_LIVE = 1,
+    MICROPIXEL_NETWORK_RESPONSE_MEMORY_CACHE = 2,
+    MICROPIXEL_NETWORK_RESPONSE_PERSISTENT_CACHE = 3,
+} micropixel_network_response_source_t;
+
+typedef enum micropixel_network_capability {
+    MICROPIXEL_NETWORK_CAP_HTTPS = 1ULL << 0U,
+    MICROPIXEL_NETWORK_CAP_AUTHENTICATED_PROFILE = 1ULL << 1U,
+    MICROPIXEL_NETWORK_CAP_MEMORY_CACHE = 1ULL << 2U,
+    MICROPIXEL_NETWORK_CAP_PERSISTENT_CACHE = 1ULL << 3U,
+} micropixel_network_capability_t;
+
+typedef enum micropixel_network_event_id {
+    MICROPIXEL_NETWORK_EVENT_REQUEST_COMPLETE = 1,
+} micropixel_network_event_id_t;
+
+typedef struct micropixel_network_info {
+    uint16_t size;
+    uint8_t configured;
+    uint8_t route_online;
+    uint8_t time_synchronized;
+    uint8_t max_active_requests;
+    uint8_t max_queued_requests;
+    uint8_t reserved0;
+    uint32_t max_response_bytes;
+    uint32_t max_request_body_bytes;
+    uint64_t capabilities;
+    uint32_t profile_revision;
+    uint32_t reserved1;
+} micropixel_network_info_t;
+
+/* START is followed by path_length relative-path bytes, body_length JSON bytes,
+ * and idempotency_key_length opaque ASCII bytes. `size` covers all bytes. */
+typedef struct micropixel_network_start_request {
+    uint16_t size;
+    uint8_t method;
+    uint8_t cache_mode;
+    uint16_t path_length;
+    uint16_t idempotency_key_length;
+    uint32_t body_length;
+    uint32_t reserved0;
+} micropixel_network_start_request_t;
+
+typedef struct micropixel_network_start_response {
+    uint16_t size;
+    uint16_t reserved0;
+    micropixel_network_request_handle_t request_handle;
+} micropixel_network_start_response_t;
+
+typedef struct micropixel_network_read_request {
+    uint16_t size;
+    uint16_t reserved0;
+    micropixel_network_request_handle_t request_handle;
+    uint32_t offset;
+    uint32_t capacity;
+} micropixel_network_read_request_t;
+
+/* READ is followed by chunk_length response bytes. */
+typedef struct micropixel_network_read_response {
+    uint16_t size;
+    uint16_t chunk_length;
+    micropixel_network_request_handle_t request_handle;
+    uint32_t total_length;
+    uint32_t offset;
+} micropixel_network_read_response_t;
+
+/* Fits the core event's fixed 16-byte payload. */
+typedef struct micropixel_network_complete_event_payload {
+    micropixel_network_request_handle_t request_handle;
+    uint32_t body_length;
+    uint32_t cache_age_seconds;
+    uint16_t http_status;
+    uint8_t source;
+    uint8_t reserved0;
+} micropixel_network_complete_event_payload_t;
 
 typedef enum micropixel_audio_capability {
     MICROPIXEL_AUDIO_CAPABILITY_OGG_OPUS = 1U << 0U,
     /* PCM_STREAM_* methods and the PCM_STREAM_LOW_WATER event are available. */
     MICROPIXEL_AUDIO_CAPABILITY_PCM_STREAM = 1U << 1U,
+    /* INPUT_GET_INFO and INPUT_READ are available. */
+    MICROPIXEL_AUDIO_CAPABILITY_INPUT_PCM = 1U << 2U,
 } micropixel_audio_capability_t;
 
 typedef enum micropixel_audio_format {
@@ -1249,6 +1362,28 @@ typedef struct micropixel_audio_info {
     uint16_t max_pcm_streams;
     uint16_t reserved0;
 } micropixel_audio_info_t;
+
+typedef struct micropixel_audio_input_info {
+    uint16_t size;
+    uint16_t channels;
+    uint32_t sample_rate;
+    uint16_t bits_per_sample;
+    uint16_t reserved0;
+    uint32_t max_read_frames;
+} micropixel_audio_input_info_t;
+
+typedef struct micropixel_audio_input_read_request {
+    uint16_t size;
+    uint16_t reserved0;
+    uint32_t frame_count;
+} micropixel_audio_input_read_request_t;
+
+/* Followed by frame_count signed 16-bit mono samples; size covers both. */
+typedef struct micropixel_audio_input_read_response {
+    uint16_t size;
+    uint16_t reserved0;
+    uint32_t frame_count;
+} micropixel_audio_input_read_response_t;
 
 typedef struct micropixel_audio_tone {
     uint16_t size;
@@ -1787,10 +1922,17 @@ MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_raster_triangle_t) == 36U,
                              "micropixel_raster_triangle_t ABI size changed");
 MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_raster_quad_t) == 44U, "micropixel_raster_quad_t ABI size changed");
 MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_raster_span_t) == 28U, "micropixel_raster_span_t ABI size changed");
-MICROPIXEL_ABI_STATIC_ASSERT(offsetof(micropixel_raster_span_t, s) == 12U, "micropixel_raster_span_t.s ABI offset changed");
+MICROPIXEL_ABI_STATIC_ASSERT(offsetof(micropixel_raster_span_t, s) == 12U,
+                             "micropixel_raster_span_t.s ABI offset changed");
 MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_raster_text_t) == 16U, "micropixel_raster_text_t ABI size changed");
 MICROPIXEL_ABI_STATIC_ASSERT(offsetof(micropixel_raster_text_t, font_handle) == 12U,
                              "micropixel_raster_text_t.font_handle ABI offset changed");
+MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_audio_input_info_t) == 16U,
+                             "micropixel_audio_input_info_t ABI size changed");
+MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_audio_input_read_request_t) == 8U,
+                             "micropixel_audio_input_read_request_t ABI size changed");
+MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_audio_input_read_response_t) == 8U,
+                             "micropixel_audio_input_read_response_t ABI size changed");
 MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_surface_create_request_t) == 24U,
                              "micropixel_surface_create_request_t ABI size changed");
 MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_surface_create_response_t) == 20U,

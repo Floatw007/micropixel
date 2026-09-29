@@ -17,6 +17,7 @@
 #include "esp_system.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
+#include "psa/crypto.h"
 #include "runtime/bundle/bundle_format.h"
 
 namespace micropixel::firmware::local_control {
@@ -26,6 +27,7 @@ constexpr char kTag[] = "local_control";
 constexpr std::string_view kPrefix = "MPX1 ";
 constexpr size_t kMaximumPackageBytes = 8U * 1024U * 1024U;
 constexpr size_t kMaximumChunkBytes = 3072U;
+constexpr size_t kMaximumTerminalProfileBytes = 6144U;
 constexpr TickType_t kInstallTimeout = pdMS_TO_TICKS(120U * 1000U);
 constexpr uint64_t kInstallTimeoutUs = 120ULL * 1000ULL * 1000ULL;
 constexpr TickType_t kHostCommandTimeout = pdMS_TO_TICKS(5U * 60U * 1000U);
@@ -206,12 +208,14 @@ bool ParseKeyCode(const char* text, device::KeyCode& code) {
 
 LocalControlAgent::LocalControlAgent(device::LocalControl& transport, control::ControlDispatcher& controls,
                                      logging::SystemLogBuffer& system_logs, const device::BoardInfo& board_info,
-                                     host::network::Network& network)
+                                     host::network::Network& network,
+                                     platform::network::ManagedHttpClient& managed_network)
     : transport_(transport),
       controls_(controls),
       system_logs_(system_logs),
       board_info_(board_info),
-      network_(network) {
+      network_(network),
+      managed_network_(managed_network) {
     response_queue_bytes_ = static_cast<uint8_t*>(
         heap_caps_calloc(kResponseQueueCapacity, sizeof(Response), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     void* command_workspace_storage =
@@ -238,6 +242,7 @@ LocalControlAgent::LocalControlAgent(device::LocalControl& transport, control::C
 
 LocalControlAgent::~LocalControlAgent() {
     Stop();
+    AbortTerminalConfigure();
     if (install_timer_ != nullptr) {
         (void)esp_timer_stop_blocking(install_timer_, portMAX_DELAY);
         (void)esp_timer_delete(install_timer_);
@@ -894,6 +899,152 @@ void LocalControlAgent::HandleInstallAbort(uint32_t request_id, std::string_view
     (void)QueueResponse(request_id, "OK", "INSTALL_ABORTED");
 }
 
+void LocalControlAgent::HandleTerminalConfigureBegin(uint32_t request_id, std::string_view arguments) {
+    const std::string_view size_text = TakeToken(arguments);
+    const std::string_view sha256_text = TakeToken(arguments);
+    size_t size = 0U;
+    std::array<uint8_t, 32U> sha256{};
+    if (terminal_config_.data != nullptr || !ParseUnsigned(size_text, size) || size == 0U ||
+        size > kMaximumTerminalProfileBytes || !ParseSha256(sha256_text, sha256) || !TrimLeft(arguments).empty()) {
+        (void)QueueResponse(request_id, "ERROR", terminal_config_.data != nullptr ? "terminal_config_busy"
+                                                                                  : "invalid_terminal_config");
+        return;
+    }
+    uint8_t* data = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (data == nullptr) {
+        (void)QueueResponse(request_id, "ERROR", "out_of_memory");
+        return;
+    }
+    terminal_config_ = {.data = data, .size = size, .request_id = request_id, .sha256 = sha256};
+    (void)QueueResponse(request_id, "OK", "TERMINAL_CONFIG_READY 3072");
+}
+
+void LocalControlAgent::HandleTerminalConfigureChunk(uint32_t request_id, std::string_view arguments) {
+    const std::string_view offset_text = TakeToken(arguments);
+    const std::string_view encoded = TakeToken(arguments);
+    size_t offset = 0U;
+    if (terminal_config_.data == nullptr || request_id != terminal_config_.request_id) {
+        (void)QueueResponse(request_id, "ERROR", "no_terminal_config_session");
+        return;
+    }
+    if (!ParseUnsigned(offset_text, offset) || offset != terminal_config_.received || encoded.empty() ||
+        encoded.size() > 4096U || !TrimLeft(arguments).empty()) {
+        (void)QueueResponse(request_id, "ERROR", "invalid_terminal_config_chunk");
+        return;
+    }
+    size_t decoded_size = 0U;
+    const size_t remaining = terminal_config_.size - terminal_config_.received;
+    const int status = mbedtls_base64_decode(terminal_config_.data + terminal_config_.received, remaining,
+                                             &decoded_size, reinterpret_cast<const unsigned char*>(encoded.data()),
+                                             encoded.size());
+    if (status != 0 || decoded_size == 0U || decoded_size > remaining) {
+        (void)QueueResponse(request_id, "ERROR", "invalid_terminal_config_chunk");
+        return;
+    }
+    terminal_config_.received += decoded_size;
+    std::array<char, 64U> detail{};
+    (void)std::snprintf(detail.data(), detail.size(), "TERMINAL_CONFIG_CHUNK %zu", terminal_config_.received);
+    (void)QueueResponse(request_id, "OK", detail.data());
+}
+
+void LocalControlAgent::HandleTerminalConfigureCommit(uint32_t request_id, std::string_view arguments) {
+    if (!TrimLeft(arguments).empty() || terminal_config_.data == nullptr ||
+        request_id != terminal_config_.request_id) {
+        (void)QueueResponse(request_id, "ERROR", "no_terminal_config_session");
+        return;
+    }
+    if (terminal_config_.received != terminal_config_.size) {
+        (void)QueueResponse(request_id, "ERROR", "terminal_config_incomplete");
+        return;
+    }
+    std::array<uint8_t, 32U> digest{};
+    size_t digest_size = 0U;
+    if (psa_crypto_init() != PSA_SUCCESS ||
+        psa_hash_compute(PSA_ALG_SHA_256, terminal_config_.data, terminal_config_.size, digest.data(), digest.size(),
+                         &digest_size) != PSA_SUCCESS ||
+        digest_size != digest.size() || digest != terminal_config_.sha256) {
+        AbortTerminalConfigure();
+        (void)QueueResponse(request_id, "ERROR", "terminal_config_sha256_mismatch");
+        return;
+    }
+    const int32_t status = managed_network_.Configure({terminal_config_.data, terminal_config_.size});
+    AbortTerminalConfigure();
+    if (status != MICROPIXEL_STATUS_OK) {
+        (void)QueueResponse(request_id, "ERROR", status == MICROPIXEL_STATUS_WOULD_BLOCK ? "terminal_busy"
+                                                                                         : "invalid_terminal_config");
+        return;
+    }
+    (void)QueueResponse(request_id, "OK", "TERMINAL_CONFIGURED");
+}
+
+void LocalControlAgent::HandleTerminalConfigureAbort(uint32_t request_id, std::string_view arguments) {
+    if (!TrimLeft(arguments).empty() || terminal_config_.data == nullptr ||
+        request_id != terminal_config_.request_id) {
+        (void)QueueResponse(request_id, "ERROR", "no_terminal_config_session");
+        return;
+    }
+    AbortTerminalConfigure();
+    (void)QueueResponse(request_id, "OK", "TERMINAL_CONFIG_ABORTED");
+}
+
+void LocalControlAgent::HandleTerminalStatus(uint32_t request_id, std::string_view arguments) {
+    if (!TrimLeft(arguments).empty()) {
+        (void)QueueResponse(request_id, "ERROR", "invalid_arguments");
+        return;
+    }
+    const auto status = managed_network_.ProfileStatus();
+    std::array<unsigned char, 348U> encoded_origin{};
+    std::array<unsigned char, 92U> encoded_app_id{};
+    size_t origin_size = 0U;
+    size_t app_id_size = 0U;
+    const size_t origin_length = std::strlen(status.origin.data());
+    const size_t app_id_length = std::strlen(status.allowed_app_id.data());
+    if ((origin_length != 0U &&
+         mbedtls_base64_encode(encoded_origin.data(), encoded_origin.size() - 1U, &origin_size,
+                               reinterpret_cast<const unsigned char*>(status.origin.data()), origin_length) != 0) ||
+        (app_id_length != 0U &&
+         mbedtls_base64_encode(encoded_app_id.data(), encoded_app_id.size() - 1U, &app_id_size,
+                               reinterpret_cast<const unsigned char*>(status.allowed_app_id.data()),
+                               app_id_length) != 0)) {
+        (void)QueueResponse(request_id, "ERROR", "response_encoding_failed");
+        return;
+    }
+    encoded_origin[origin_size] = '\0';
+    encoded_app_id[app_id_size] = '\0';
+    std::array<char, 512U> detail{};
+    const int written = std::snprintf(
+        detail.data(), detail.size(), "TERMINAL_STATUS %u %" PRIu32 " %" PRIu64 " %s %s %s %s",
+        status.configured ? 1U : 0U, status.revision, status.store_id,
+        origin_size == 0U ? "-" : reinterpret_cast<const char*>(encoded_origin.data()),
+        app_id_size == 0U ? "-" : reinterpret_cast<const char*>(encoded_app_id.data()),
+        status.certificate_fingerprint[0] == '\0' ? "-" : status.certificate_fingerprint.data(),
+        status.token_suffix[0] == '\0' ? "-" : status.token_suffix.data());
+    if (written <= 0 || static_cast<size_t>(written) >= detail.size()) {
+        (void)QueueResponse(request_id, "ERROR", "response_encoding_failed");
+        return;
+    }
+    (void)QueueResponse(request_id, "OK", detail.data());
+}
+
+void LocalControlAgent::HandleTerminalClear(uint32_t request_id, std::string_view arguments) {
+    if (!TrimLeft(arguments).empty()) {
+        (void)QueueResponse(request_id, "ERROR", "invalid_arguments");
+        return;
+    }
+    const int32_t status = managed_network_.ClearProfile();
+    (void)QueueResponse(request_id, status == MICROPIXEL_STATUS_OK ? "OK" : "ERROR",
+                        status == MICROPIXEL_STATUS_OK ? "TERMINAL_CLEARED" : "terminal_busy");
+}
+
+void LocalControlAgent::AbortTerminalConfigure() {
+    if (terminal_config_.data != nullptr) {
+        auto* secret = reinterpret_cast<volatile uint8_t*>(terminal_config_.data);
+        for (size_t index = 0U; index < terminal_config_.size; ++index) secret[index] = 0U;
+        heap_caps_free(terminal_config_.data);
+    }
+    terminal_config_ = {};
+}
+
 bool LocalControlAgent::ArmInstallTimeout(uint64_t delay_us) {
     if (install_timer_ == nullptr || delay_us == 0U) {
         return false;
@@ -1012,6 +1163,18 @@ void LocalControlAgent::HandleCommand(const char* command) {
         HandleInstallCommit(request_id, remaining);
     } else if (operation == "APP_INSTALL_ABORT") {
         HandleInstallAbort(request_id, remaining);
+    } else if (operation == "TERMINAL_CONFIGURE_BEGIN") {
+        HandleTerminalConfigureBegin(request_id, remaining);
+    } else if (operation == "TERMINAL_CONFIGURE_CHUNK") {
+        HandleTerminalConfigureChunk(request_id, remaining);
+    } else if (operation == "TERMINAL_CONFIGURE_COMMIT") {
+        HandleTerminalConfigureCommit(request_id, remaining);
+    } else if (operation == "TERMINAL_CONFIGURE_ABORT") {
+        HandleTerminalConfigureAbort(request_id, remaining);
+    } else if (operation == "TERMINAL_STATUS") {
+        HandleTerminalStatus(request_id, remaining);
+    } else if (operation == "TERMINAL_CLEAR") {
+        HandleTerminalClear(request_id, remaining);
     } else {
         (void)QueueResponse(request_id, "ERROR", "unsupported_command");
     }

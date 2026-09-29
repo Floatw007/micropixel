@@ -446,7 +446,11 @@ Ogg Opus 由 Host 解码和缓冲，Guest 不访问 codec/I2S。采样率与可�
 环满，等待 LowWaterFrom 后继续；欠载播放静音而不结束流。
 
 每个应用最多一条 PCM stream，支持 1/2 声道，采样率为设备混音率或其整数分频。Close、析构或
-StopAll 关闭流；暂停期间保留流，恢复后继续播放已缓冲数据。接口见 [audio.hpp](audio.hpp)。
+StopAll 关闭流；暂停期间保留流，恢复后继续播放已缓冲数据。
+
+Audio 1.1 的输入能力由 `AudioInfo::supports_input_pcm` 声明。`input_info()` 返回实际采样率、声道、位宽和
+单次最大帧数；`ReadInput()` 把最多 256 帧 signed int16 mono PCM 同步复制到 Guest 缓冲。应用必须先检查
+能力位，不得假设所有设备都有麦克风。接口见 [audio.hpp](audio.hpp)。
 
 多音符音效由 `ToneSequencer<N>`（[tone_sequencer.hpp](tone_sequencer.hpp)）播放：`Play(profile, gain)`
 接收构建从 `audio/sfx.json` 生成的 `ToneSpec` 数组，`delay_ms == 0` 的音符立即发出，其余进入 N 个

@@ -52,6 +52,8 @@ inline micropixel::Error ErrorFromStatus(int32_t status) {
             return Error{ErrorCode::kWouldBlock};
         case MICROPIXEL_STATUS_CANCELLED:
             return Error{ErrorCode::kCancelled};
+        case MICROPIXEL_STATUS_TIMEOUT:
+            return Error{ErrorCode::kTimeout};
         default:
             return Error{ErrorCode::kInternal};
     }

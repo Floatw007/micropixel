@@ -21,7 +21,8 @@
     "device",
     "sensor",
     "gpio",
-    "haptics"
+    "haptics",
+    "network"
   ],
   "layouts": [
     "square",

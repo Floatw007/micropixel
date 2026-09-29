@@ -17,6 +17,7 @@ enum class ErrorCode : int32_t {
     kRateLimited,
     kInternal,
     kWouldBlock,
+    kTimeout,
 };
 
 [[nodiscard]] constexpr const char* ErrorCodeName(ErrorCode code) noexcept {
@@ -43,6 +44,8 @@ enum class ErrorCode : int32_t {
             return "internal";
         case ErrorCode::kWouldBlock:
             return "would_block";
+        case ErrorCode::kTimeout:
+            return "timeout";
     }
     return "unknown";
 }

@@ -15,6 +15,7 @@
 #include "host/controller/control_dispatcher.hpp"
 #include "host/logging/system_log_buffer.hpp"
 #include "host/network/network.hpp"
+#include "platform/network/managed_http_client.hpp"
 
 namespace micropixel::firmware::local_control {
 
@@ -24,7 +25,7 @@ class LocalControlAgent final {
    public:
     LocalControlAgent(device::LocalControl& transport, control::ControlDispatcher& controls,
                       logging::SystemLogBuffer& system_logs, const device::BoardInfo& board_info,
-                      host::network::Network& network);
+                      host::network::Network& network, platform::network::ManagedHttpClient& managed_network);
     ~LocalControlAgent();
     LocalControlAgent(const LocalControlAgent&) = delete;
     LocalControlAgent& operator=(const LocalControlAgent&) = delete;
@@ -57,6 +58,14 @@ class LocalControlAgent final {
         std::array<uint8_t, 32U> sha256{};
     };
 
+    struct TerminalConfigSession final {
+        uint8_t* data{};
+        size_t size{};
+        size_t received{};
+        uint32_t request_id{};
+        std::array<uint8_t, 32U> sha256{};
+    };
+
     static void ReceiveCommand(void* context, const char* command);
     static bool ProvideResponse(void* context, char* response, size_t capacity);
     static bool ReceiveHostResult(void* context, const control::HostResult& result);
@@ -81,6 +90,13 @@ class LocalControlAgent final {
     void HandleInstallChunk(uint32_t request_id, std::string_view arguments);
     void HandleInstallCommit(uint32_t request_id, std::string_view arguments);
     void HandleInstallAbort(uint32_t request_id, std::string_view arguments);
+    void HandleTerminalConfigureBegin(uint32_t request_id, std::string_view arguments);
+    void HandleTerminalConfigureChunk(uint32_t request_id, std::string_view arguments);
+    void HandleTerminalConfigureCommit(uint32_t request_id, std::string_view arguments);
+    void HandleTerminalConfigureAbort(uint32_t request_id, std::string_view arguments);
+    void HandleTerminalStatus(uint32_t request_id, std::string_view arguments);
+    void HandleTerminalClear(uint32_t request_id, std::string_view arguments);
+    void AbortTerminalConfigure();
     [[nodiscard]] bool ArmInstallTimeout(uint64_t delay_us);
     void DisarmInstallTimeout();
     void AbortInstall();
@@ -91,6 +107,7 @@ class LocalControlAgent final {
     logging::SystemLogBuffer& system_logs_;
     const device::BoardInfo& board_info_;
     host::network::Network& network_;
+    platform::network::ManagedHttpClient& managed_network_;
     host::network::NetworkSnapshot network_workspace_{};
     StaticQueue_t response_queue_storage_{};
     uint8_t* response_queue_bytes_{};
@@ -100,6 +117,7 @@ class LocalControlAgent final {
     CommandWorkspace* command_workspace_{};
     control::HostSnapshot* snapshot_workspace_{};
     InstallSession install_{};
+    TerminalConfigSession terminal_config_{};
     esp_timer_handle_t install_timer_{};
     esp_timer_handle_t restart_timer_{};
     std::atomic<bool> install_timeout_due_{};

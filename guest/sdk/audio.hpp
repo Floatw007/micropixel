@@ -29,11 +29,19 @@ struct AudioInfo final {
     // Audio 1.2: Guest PCM streams (0 when the Host predates them).
     uint16_t max_pcm_streams{};
     bool supports_pcm_stream{};
+    bool supports_input_pcm{};
 
     [[nodiscard]] constexpr bool Supports(Waveform waveform) const {
         const uint32_t bit = static_cast<uint32_t>(waveform);
         return bit < 32U && (supported_waveforms & (1U << bit)) != 0U;
     }
+};
+
+struct AudioInputInfo final {
+    uint32_t sample_rate{};
+    uint16_t channels{};
+    uint16_t bits_per_sample{};
+    uint32_t max_read_frames{};
 };
 
 struct PlaybackOptions final {
@@ -204,6 +212,9 @@ class Audio final {
     [[nodiscard]] Result<Playback> Play(const AudioClip& clip, PlaybackOptions options = {}) const;
     [[nodiscard]] Result<Playback> Play(AssetId asset, PlaybackOptions options = {}) const;
     [[nodiscard]] Result<PcmStream> OpenPcmStream(const PcmStreamOptions& options) const;
+    [[nodiscard]] Result<AudioInputInfo> input_info() const;
+    // Reads up to frame_capacity signed 16-bit mono frames into caller memory.
+    [[nodiscard]] Result<uint32_t> ReadInput(int16_t* mono_samples, uint32_t frame_capacity) const;
     [[nodiscard]] Result<void> StopAll() const;
 
    private:

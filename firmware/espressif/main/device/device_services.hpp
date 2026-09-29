@@ -6,6 +6,7 @@
 
 #include "abi/micropixel_abi.h"
 #include "device/contracts/audio.hpp"
+#include "device/contracts/audio_input.hpp"
 #include "device/contracts/battery.hpp"
 #include "device/contracts/board_info.hpp"
 #include "device/contracts/devices.hpp"
@@ -13,6 +14,7 @@
 #include "device/contracts/graphics.hpp"
 #include "device/contracts/haptics.hpp"
 #include "device/contracts/input.hpp"
+#include "device/contracts/managed_network.hpp"
 #include "device/contracts/random.hpp"
 #include "device/contracts/sensors.hpp"
 
@@ -165,6 +167,17 @@ class AudioService final {
     Audio& implementation_;
 };
 
+class AudioInputService final {
+   public:
+    explicit AudioInputService(AudioInput& implementation) : implementation_(implementation) {}
+
+    [[nodiscard]] DeviceResult<micropixel_audio_input_info_t> GetInfo() const;
+    [[nodiscard]] DeviceResult<uint32_t> Read(int16_t* mono_samples, uint32_t frame_capacity) const;
+
+   private:
+    AudioInput& implementation_;
+};
+
 class RandomService final {
    public:
     explicit RandomService(Random& implementation) : implementation_(implementation) {}
@@ -175,21 +188,54 @@ class RandomService final {
     Random& implementation_;
 };
 
+class ManagedNetworkService final {
+   public:
+    explicit ManagedNetworkService(ManagedNetwork& implementation) : implementation_(implementation) {}
+
+    [[nodiscard]] int32_t OpenSession(std::string_view app_id, ManagedNetworkCompletionSink sink, void* context,
+                                      uint32_t& session_out) const {
+        return implementation_.OpenSession(app_id, sink, context, session_out);
+    }
+    void CloseSession(uint32_t session) const { implementation_.CloseSession(session); }
+    [[nodiscard]] int32_t GetInfo(uint32_t session, ManagedNetworkInfo& info_out) const {
+        return implementation_.GetInfo(session, info_out);
+    }
+    [[nodiscard]] int32_t Start(uint32_t session, const ManagedNetworkRequest& request, uint32_t& handle_out) const {
+        return implementation_.Start(session, request, handle_out);
+    }
+    [[nodiscard]] int32_t Read(uint32_t session, uint32_t handle, uint32_t offset, std::span<uint8_t> destination,
+                               uint32_t& length_out, uint32_t& total_length_out) const {
+        return implementation_.Read(session, handle, offset, destination, length_out, total_length_out);
+    }
+    [[nodiscard]] int32_t Cancel(uint32_t session, uint32_t handle) const {
+        return implementation_.Cancel(session, handle);
+    }
+    [[nodiscard]] int32_t Close(uint32_t session, uint32_t handle) const {
+        return implementation_.Close(session, handle);
+    }
+
+   private:
+    ManagedNetwork& implementation_;
+};
+
 // Value-owned service façade assembled by FirmwareApp and injected into each
 // Guest runtime session. Concrete Platform objects remain outside Runtime.
 class DeviceServices final {
    public:
-    DeviceServices(Graphics& graphics, DisplayInfo display, Input& input, Audio& audio, Random& random,
-                   DeviceCatalog& devices, Sensors& sensors, Gpio& gpio, Haptics& haptics, Battery& battery)
+    DeviceServices(Graphics& graphics, DisplayInfo display, Input& input, Audio& audio, AudioInput& audio_input,
+                   Random& random, DeviceCatalog& devices, Sensors& sensors, Gpio& gpio, Haptics& haptics,
+                   Battery& battery, ManagedNetwork& managed_network)
         : graphics_(graphics, display),
           input_(input),
           audio_(audio),
+          audio_input_(audio_input),
           random_(random),
           devices_(devices),
           sensors_(sensors),
           gpio_(gpio),
           haptics_(haptics),
-          power_info_(devices, battery) {}
+          power_info_(devices, battery),
+          managed_network_(managed_network) {}
     DeviceServices(const DeviceServices&) = delete;
     DeviceServices& operator=(const DeviceServices&) = delete;
 
@@ -201,6 +247,9 @@ class DeviceServices final {
     }
     [[nodiscard]] AudioService& audio() {  // NOLINT(readability-identifier-naming)
         return audio_;
+    }
+    [[nodiscard]] AudioInputService& audio_input() {  // NOLINT(readability-identifier-naming)
+        return audio_input_;
     }
     [[nodiscard]] RandomService& random() {  // NOLINT(readability-identifier-naming)
         return random_;
@@ -220,17 +269,22 @@ class DeviceServices final {
     [[nodiscard]] PowerInfoService& power_info() {  // NOLINT(readability-identifier-naming)
         return power_info_;
     }
+    [[nodiscard]] ManagedNetworkService& managed_network() {  // NOLINT(readability-identifier-naming)
+        return managed_network_;
+    }
 
    private:
     GraphicsService graphics_;
     InputService input_;
     AudioService audio_;
+    AudioInputService audio_input_;
     RandomService random_;
     DevicesService devices_;
     SensorsService sensors_;
     GpioService gpio_;
     HapticsService haptics_;
     PowerInfoService power_info_;
+    ManagedNetworkService managed_network_;
 };
 
 }  // namespace micropixel::device

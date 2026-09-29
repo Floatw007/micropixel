@@ -9,7 +9,7 @@ const audio_codec_if_t* Es8311I2sAudioSink::CreateCodec(const audio_codec_ctrl_i
     es8311_codec_cfg_t config{};
     config.ctrl_if = control;
     config.gpio_if = gpio;
-    config.codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC;
+    config.codec_mode = Config().data_in == GPIO_NUM_NC ? ESP_CODEC_DEV_WORK_MODE_DAC : ESP_CODEC_DEV_WORK_MODE_BOTH;
     config.pa_pin = Config().amplifier_enable;
     config.pa_reverted = Config().amplifier_active_low;
     config.master_mode = false;
