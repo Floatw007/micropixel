@@ -20,6 +20,7 @@
 | [应用商店](design/app-store.zh-CN.md) | [定时器与功耗](development/timers-and-idle-power.zh-CN.md) |
 | [USB 控制](design/usb-local-control.zh-CN.md) | [S3 板型](development/esp32-s3-box-3-bring-up.zh-CN.md) |
 | — | [ESP32-P4 Function EV Board](development/esp32-p4-function-ev-board-bring-up.zh-CN.md) |
+| — | [Ubuntu Function EV 开发环境](development/ubuntu-function-ev-development.zh-CN.md) |
 | — | [固件发布](development/firmware-release.zh-CN.md) |
 | [固件源码](../firmware/espressif/main/README.zh-CN.md) | [SDK 发布](development/sdk-release.zh-CN.md) |
 
