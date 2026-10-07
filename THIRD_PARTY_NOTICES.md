@@ -29,6 +29,24 @@ esp-iot-solution; the build only uses its `esp_lvgl_adapter` component through `
 - copyright: Espressif Systems (Shanghai) CO LTD;
 - license: Apache-2.0.
 
+Its `esp_lcd_touch_spd2010` component is additionally copied into
+`firmware/espressif/patched_components/esp_lcd_touch_spd2010/` and changed in two places: that
+component cannot read registers on ESP-IDF 6.1, because it passes `0` as
+`esp_lcd_panel_io_rx_param()`'s command, which selects a zero-length command phase that 6.1 rejects
+where the controller needs a read with no preceding byte; and it publishes a poll that finds no
+pending report as a finger lift, which makes one tap register as two on the SenseCAP Watcher, whose
+touch interrupt line is on an I/O expander rather than a GPIO and which therefore has to poll. The
+copy is Apache-2.0 like the original, and its `README.md` records both divergences and how to drop the
+copy once the component is fixed upstream.
+
+- copied component: <https://github.com/espressif/esp-iot-solution/tree/master/components/display/lcd_touch/esp_lcd_touch_spd2010>;
+- copy origin: the pinned submodule commit above;
+- modification 1: `i2c_read` passes `-1` instead of `0` to `esp_lcd_panel_io_rx_param()`;
+- modification 2: `read_data()` returns `ESP_ERR_INVALID_RESPONSE` and leaves `tp->data` untouched
+  when no report frame was pending, and `read_tp_hdp()` reports a frame whose points all carry
+  `weight == 0` as zero points, so that a lift is only ever published from controller data;
+- license: Apache-2.0.
+
 ## LLVM libc++ in Guest applications
 
 MicroPixel Guest applications are compiled with libc++ headers and selected static-library objects distributed by
@@ -40,6 +58,47 @@ wasi-sdk. Link-time garbage collection retains only objects referenced by each G
 
 The toolchain distributions contain the complete applicable license and attribution files. MicroPixel does not
 copy the libc++ source tree into this repository.
+
+## SenseCAP Watcher board power sequencing
+
+The PCA95xx rail directions, the rail startup order and the active levels in
+`firmware/espressif/main/platform/boards/sensecap-watcher/board_power.cpp` follow
+the board support package published for the SenseCAP Watcher. MicroPixel drives
+the expander through its own I2C device handle and keeps its own peripheral
+lifecycle.
+
+- upstream: <https://github.com/Seeed-Studio/SenseCAP-Watcher-Firmware>;
+- file: `components/sensecap-watcher/sensecap-watcher.c`;
+- referenced revision: `a02671cd866f91a34f3e4f63a1d8109cda4c03d0`;
+- license: Apache-2.0.
+
+The same sequence is implemented independently by the xiaozhi-esp32 board
+`main/boards/sensecap-watcher/sensecap_watcher.cc`, which was used to confirm
+that the vendor's direction masks are correct and its trailing comments are not.
+
+## SenseCAP Watcher battery monitoring
+
+The ADC channel and attenuation, the pack divider ratio, the averaging depth and
+the state-of-charge curve in
+`firmware/espressif/main/platform/boards/sensecap-watcher/battery_peripheral.cpp`
+come from the board support package published for the SenseCAP Watcher, which is
+also the authority for the expander line the board treats as charge state.
+MicroPixel samples the divider through its own ADC oneshot unit, reads the line
+through its own board power service, and reports the level to the Host UI.
+
+- upstream: <https://github.com/Seeed-Studio/SenseCAP-Watcher-Firmware>;
+- files: `components/sensecap-watcher/include/sensecap-watcher.h` (`BSP_BAT_ADC_CHAN`,
+  `BSP_BAT_ADC_ATTEN`, `BSP_BAT_VOL_RATIO`, `BSP_PWR_VBUS_IN_DET`, `BSP_PWR_BAT_DET`);
+  `components/sensecap-watcher/sensecap-watcher.c` (`bsp_battery_get_voltage()`,
+  `bsp_battery_get_percent()`, `bsp_battery_is_present()`); and
+  `examples/factory_firmware/main/view/view.c` for the `VBUS_IN_DET` charge convention its own UI uses;
+- referenced revision: `a02671cd866f91a34f3e4f63a1d8109cda4c03d0`;
+- license: Apache-2.0.
+
+The curve is used as published, `percent = (-v² + 9016v - 19189000) / 10000` for a pack voltage `v`
+in millivolts. The same division of labour appears in the xiaozhi-esp32 board
+`main/boards/sensecap-watcher/sensecap_watcher.cc`, which derives a level from the divider and never
+gates it on the battery-detect line.
 
 ## MetalioClaw4 board initialization and display driver
 

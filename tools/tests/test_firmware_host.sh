@@ -242,6 +242,9 @@ build_and_run bitmap_store \
 # Exercise the pinned decoder with real PNG input and fault-injected PSRAM.
 # libpng supports C++ compilation; no system libpng installation is required.
 png_component="$workspace_root/firmware/espressif/managed_components/espressif__libpng"
+png_config_dir="$test_output_dir/libpng-config"
+mkdir -p "$png_config_dir"
+cp "$png_component/libpng/scripts/pnglibconf.h.prebuilt" "$png_config_dir/pnglibconf.h"
 png_sources=()
 for source in png pngerror pngget pngmem pngpread pngread pngrio pngrtran pngrutil pngset pngtrans \
     pngwio pngwrite pngwtran pngwutil; do
@@ -251,7 +254,7 @@ build_and_run bitmap_decoder \
     -DMICROPIXEL_TEST_TRACK_HEAP -DPNG_ARM_NEON_OPT=0 -DPNG_INTEL_SSE_OPT=0 \
     -Wno-unused-command-line-argument \
     -fsanitize=address,undefined -g -O2 \
-    -I "$png_component" -I "$png_component/libpng" \
+    -I "$png_config_dir" -I "$png_component" -I "$png_component/libpng" \
     -I "$workspace_root/firmware/espressif/managed_components/espressif__esp_new_jpeg/include" \
     "$workspace_root/tools/tests/test_bitmap_decoder.cpp" \
     "$workspace_root/firmware/espressif/main/runtime/resources/bitmap_decoder.cpp" \

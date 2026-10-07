@@ -148,7 +148,7 @@ down/up 且 pressed/released 状态同步；v1.0 的 Demo Devices 页选择 `Ora
 触摸、音频、电源和调试脚冲突。
 如果 ESP-IDF preview 自身出现源码/header 不同步，应更新或重装对应 SDK，不在项目仓库中修补本机 IDF。
 
-## ESP32-S3 / ESP32-S3-BOX-3、立创 SZPI 与 M5Stack CoreS3
+## ESP32-S3 / ESP32-S3-BOX-3、立创 SZPI、M5Stack CoreS3 与 SenseCAP Watcher
 
 BOX-3 配置固定使用 40 MHz SPI、40 行内部 SRAM partial buffer 和双缓冲：
 
@@ -163,8 +163,9 @@ bash tools/s3.sh monitor box3 /dev/cu.usbmodemXXXX --reset
 四个 Xtensa AOT App。`flash-all` 烧录 Host 和对应的 8 MiB `app_store` 内容。烧录入口会先确认端口连接的是
 ESP32-S3，默认使用原生 USB Serial/JTAG。
 
-立创 SZPI ESP32-S3 使用同一套 40 行内部 SRAM 双缓冲和 Xtensa Guest 基线，板级显示、触控与传感器接线
-由独立 profile 提供：
+立创 SZPI ESP32-S3 使用 35 行内部 SRAM 双绘制缓冲及内部 SRAM RGB565 传输缓冲，为网络与加密保留更多
+内部内存。SZPI 支持在 30–40 行之间调整，其他 S3 板仍保持各自配置；Xtensa Guest 基线不变，板级显示、
+触控与传感器接线由独立 profile 提供：
 
 ```sh
 bash tools/s3.sh build-host szpi
@@ -183,15 +184,39 @@ bash tools/s3.sh flash-host cores3 /dev/cu.usbmodemXXXX
 bash tools/s3.sh monitor cores3 /dev/cu.usbmodemXXXX --reset
 ```
 
+SenseCAP Watcher 是 412×412 圆形屏（SPD2010、QSPI），圆形几何由 `square_412` profile 提供：共享布局按
+内接正方形收敛，顶部标题栏与下拉状态面板按圆内可用区域摆放，Host 侧不使用板级条件编译。触摸中断接在
+扩展芯片 P0.5 上，Host 只能在任务中 10 ms 轮询，因此 `esp_lcd_touch_spd2010` 使用
+`firmware/espressif/patched_components/` 下的本地副本，两处补丁及移除条件见该目录 README。旋钮接
+GPIO41/42：单击确认、双击返回、长按关机。
+
+```sh
+bash tools/s3.sh build-host watcher
+bash tools/s3.sh build-release watcher   # Host + 七个集成 App + 完整浏览器镜像
+bash tools/s3.sh flash-all watcher /dev/cu.usbmodemXXXX
+bash tools/s3.sh flash-host watcher /dev/cu.usbmodemXXXX
+bash tools/s3.sh monitor watcher /dev/cu.usbmodemXXXX --reset
+```
+
+Watcher 有 32 MiB Flash：`app_store` 与其它 S3 板保持相同的 `0x800000` 起始，但扩展到 24 MiB
+（`partitions.s3-watcher.csv`），所以它的 App Store 镜像单独生成在
+`build/esp32s3-apps-watcher/app-store.bin`，与非 Watcher 的 8 MiB 镜像不通用。
+`sdkconfig.s3-watcher.defaults` 打开 ESP-IDF 实验特性、禁用 QSPI Flash 模式自动探测并启用双控制台。
+
+圆屏真机验收至少包括：标题栏与下拉面板完全落在圆内、不被边框遮挡；旋钮滚轮选择与左右滑动落在同一张
+卡片上，释放后停在卡片上；设置和更新按钮都能被选中；顶部时间在宽数字下不换行；触摸在 10 ms 轮询下
+不丢按下/抬起，也不出现空帧自触发。
+
 `build-release`、`flash-apps` 和 `flash-all` 同样接受 `szpi` 或 `cores3`；不写 `BOARD` 时保持原行为，默认
 操作 BOX-3。原有带 `-szpi`、`-cores3` 后缀的命令仍是兼容别名。
 
 新板第一次接入必须先烧一次 `app_store`（`flash-all` 或 `flash-apps BOARD PORT`）。只 `flash-host` 的
 新板 `app_store` 分区是空白 flash，Host 启动会打印 `App Store catalog scan failed`，
 `micropixel app list` 返回 `count=0, storeUsedBytes=0`，此时 `app install`/`run` 的 Bundle 上传会长时间
-挂起而没有明确错误。三款 S3 共享 `build/esp32s3-apps/app-store.bin`，`flash-apps` 不区分板型。
+挂起而没有明确错误。BOX-3、SZPI 和 CoreS3 共享 `build/esp32s3-apps/app-store.bin`，`flash-apps` 不区分板型；
+Watcher 使用 24 MiB 几何，必须用 `build/esp32s3-apps-watcher/app-store.bin`，两者不能互换。
 
-五板固件发布使用同一 `PROJECT_VER`，逐个生成 OTA `micropixel.bin` 与浏览器完整镜像
+各板固件发布使用同一 `PROJECT_VER`，逐个生成 OTA `micropixel.bin` 与浏览器完整镜像
 `micropixel-full.bin`。
 
 正式发布的 Remote Control endpoint 为 `quic.micropixel.ai`，发布 CI 显式注入该地址。本地发布构建需在
@@ -206,8 +231,8 @@ bash tools/s3.sh build-release szpi
 bash tools/s3.sh build-release cores3
 ```
 
-发布目录由 Control 服务仓库的 `firmware-release.jsonc` 统一声明（Control API 与官网不在本仓库）。三款 S3
-虽共享芯片和 Xtensa App Store，但 Host 镜像不可互换；设备 OTA 使用 Board profile 的 target，在线烧录页由用户
+发布目录由 Control 服务仓库的 `firmware-release.jsonc` 统一声明（Control API 与官网不在本仓库）。四款 S3
+虽共享芯片和 Xtensa Guest 基线（Watcher 的 `app_store` 为 24 MiB 几何），但 Host 镜像不可互换；设备 OTA 使用 Board profile 的 target，在线烧录页由用户
 选择具体板型并只用芯片识别做系列校验。固件镜像属于生成物，不提交到 Git；部署网站/API 时必须让配置中的五组
 相对路径都可读。
 
@@ -371,3 +396,107 @@ PNG 解码和资源销毁边界检查堆；发现损坏会输出 `MICROPIXEL HEA
 这些串口输出会增加诊断版延迟。大厅渲染、转场截图、启动封面保留和快照释放均设有边界检查。
 可用 `P4_HOST_BUILD_DIR` 指定独立诊断构建目录，避免正常构建覆盖 ELF；分析 panic 时必须使用
 与设备启动日志中 ELF SHA256 匹配的 ELF。
+
+## 10. Windows 原生构建
+
+Windows 无需 WSL 即可完成 Host 固件的构建、烧录和监视，也可以构建 Guest 应用（游戏）Bundle
+并拼接含 App 的 app_store 镜像。
+
+### 10.1 环境
+
+- 用 ESP-IDF Installation Manager 安装 ESP-IDF 6.1 及对应工具链；本仓库钉住的提交见
+  `tools/ci/firmware-sources.json`，EIM 安装的是 `v6.1` 发行标签，两者提交号不同。
+- Host 固件构建不需要 WASI SDK 和 WAMRC；构建 Guest 应用 Bundle 需要，见 10.4。
+- 入口脚本会设置 `PYTHONUTF8=1`，避免工作区、用户目录或设备标识含非 ASCII 字符时的编码问题。
+
+入口脚本 `tools/firmware.ps1` 自动准备 ESP-IDF：优先复用当前已激活的环境，否则读取 EIM 的
+`eim_idf.json`（按 `MICROPIXEL_IDF_TOOLS_PATH`、`IDF_TOOLS_PATH`、`C:\Espressif\tools`、
+`%USERPROFILE%\.espressif` 的顺序查找）中选中的版本。默认校验主次版本为 6.1；显式传入 `-IdfPath`
+或 `-IdfActivationScript` 时只告警，不阻断。
+
+### 10.2 常用命令
+
+```powershell
+pwsh tools/firmware.ps1 build-host                       # ESP32-P4，默认板型
+pwsh tools/firmware.ps1 build-host -Board box3           # ESP32-S3-BOX-3
+pwsh tools/firmware.ps1 build-host -Board szpi           # 立创 SZPI
+pwsh tools/firmware.ps1 build-host -Board cores3         # M5Stack CoreS3
+pwsh tools/firmware.ps1 build-host -Board s31            # ESP-Mosaico
+pwsh tools/firmware.ps1 build-null -Board p4             # 无硬件编译门禁
+pwsh tools/firmware.ps1 flash-host -Board p4 -Port COM7
+pwsh tools/firmware.ps1 monitor -Board p4 -Port COM7 -Reset
+pwsh tools/firmware.ps1 fullclean-host
+pwsh tools/firmware.ps1 port -Board p4                   # 打印解析到的串口
+pwsh tools/firmware.ps1 list
+```
+
+Guest 应用（游戏）Bundle：
+
+```powershell
+. .\tools\guest-toolchain.ps1
+python tools/micropixel package guest/apps/snake --aot-target xtensa --output-dir build/package/snake
+python tools/micropixel package guest/apps/tilt --aot-target xtensa --output-dir build/package/tilt
+```
+
+`-Port` 省略时按 pyserial 枚举端口并用 `esptool` 校验芯片；Windows 端口形如 `COM7`。
+`flash-host` 只烧录已构建的 Host，不写 `app_store`。首次构建会先执行 CMake configure 并可能拉取
+managed components，编译开始前有数分钟无输出属正常。
+
+### 10.3 与 shell 入口的差异
+
+- 生成的默认值文件写入构建目录：P4/S31 为 `sdkconfig.env.defaults`，S3 为 `sdkconfig.remote.defaults`。
+  内容与 `tools/p4.sh`、`tools/s31.sh`、`tools/s3.sh` 一致，`.env` 的加载规则也一致（同名环境变量优先）。
+- 不就地改写已生成的 `sdkconfig.release`。当 Remote Control 配置变化且构建目录已有该文件时脚本会告警，
+  此时执行 `fullclean-host` 让新值生效。shell 入口还会就地删除 LVGL 9.6 已废弃的符号
+  （`CONFIG_LV_MEM_SIZE_KILOBYTES`、`CONFIG_LV_MEM_POOL_EXPAND_SIZE_KILOBYTES`、
+  `CONFIG_LV_ASSERT_HANDLER_INCLUDE`），因为它们的非默认值会触发 `#warning` 并被 `-Werror=cpp`
+  变成构建失败；Windows 入口不做删除，因此复用旧的构建目录时请先 `fullclean-host`。
+- `build-release` 不在 Windows 上提供：它是 POSIX 入口，一次完成 Host、7 个示例 App、app_store 与整机
+  镜像。Windows 上请分步执行 10.4 的 Guest 构建，再用 `tools/build_app_store_image.py` 和
+  `tools/build_full_firmware_image.py` 拼接；WSL 中仍可用 `bash tools/p4.sh build-release`。
+
+### 10.4 Guest 应用构建
+
+Windows 上可以完整构建 Guest 应用 Bundle，不需要 WSL：
+
+```powershell
+. .\tools\guest-toolchain.ps1
+python tools/micropixel package guest/apps/snake --aot-target xtensa --output-dir build/package/snake
+```
+
+`tools/guest-toolchain.ps1` 从仓库根 `.env` 读取三个变量（当前 shell 已有的同名变量优先），
+校验路径可执行后写入当前进程环境，供 `tools/micropixel` 使用：
+
+| 变量 | 内容 | 用于 |
+|---|---|---|
+| `WASI_SDK_PATH` | WASI SDK 33，提供 `bin/clang++.exe` | C++23 → wasm |
+| `XTENSA_WAMRC` | Xtensa 版 `wamrc.exe` | ESP32-S3（box3、szpi、cores3） |
+| `WAMRC` | RISC-V 版 `wamrc.exe` | ESP32-P4、ESP32-S31 |
+
+`--aot-target` 必须与目标板一致（`xtensa` 或 `riscv32-ilp32f`）。Bundle 的 AOT 目标掩码由
+`tools/micropixel` 写入，固件会独立校验，因此目标不匹配会在设备上被拒绝而不是静默出错。
+工具链产物按官方清单的 SHA-256 校验；`wamrc --version` 本身不能证明 AOT 兼容性。
+
+拼接含 App 的整机镜像：
+
+```powershell
+python tools/build_app_store_image.py --app-store-size 0x0800000 --output build/app-store.bin `
+    build/windows/xtensa/packages/snake/snake.bundle.bin
+python tools/build_full_firmware_image.py --build-dir build/host-esp32s3-szpi `
+    --app-store-image build/app-store.bin --output build/micropixel-szpi-with-apps.bin
+```
+
+`app_store` 可用容量由分区尺寸推导：S3 的 8 MiB 分区为 `(8 MiB - 64 KiB) / 64 KiB = 127` 个
+64 KiB 数据块，即 7.94 MiB；Bundle 体积必须是 64 KiB 的整数倍。
+
+验收使用 `python tools/windows/verify_build.py --target xtensa`：它编译真实 App 与 conformance
+用例、校验 Bundle 与 AOT 契约、断言目标掩码，并确认第二次调用复用既有 Bundle。
+该脚本按 `build/windows/wasi.tar.gz` 缓存 WASI SDK；复用已校验的归档可避免重新下载。
+
+### 10.5 Windows 上尚未验证的部分
+
+- 烧录与监视路径按 Windows `COM` 端口实现（`tools/firmware.py` 在 `os.name == "nt"` 时接受 `COM<n>`），
+  但尚未在本仓库真机上完成验证。
+- `tools/tests/test_firmware_host.sh`、`tools/check_firmware_style.sh` 与
+  `tools/tests/test_firmware.py` 依赖 POSIX（`bash`、`fcntl`、`clang++`），Windows 上不能运行，
+  请在 WSL 中执行。Windows 入口本身已验证可完成 Host 构建。

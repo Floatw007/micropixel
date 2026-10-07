@@ -80,7 +80,7 @@ SquareSystemUiState::SquareSystemUiState(device::Input& physical_input,
                                          StatusLayerTransition& transition,
                                          const SquareSystemUiProfile& selected_profile)
     : profile(selected_profile),
-      status_layer_ui(profile.system_page),
+      status_layer_ui(profile.system_page, profile.status_layer_layout),
       action_sheets(transition),
       system_menu_ui(profile.system_page, action_sheets),
       system_detail_ui(profile.system_page, action_sheets),
@@ -743,6 +743,16 @@ void SquareSystemUiState::LeaveWifiSettings() {
     }
     UnbindPageInput(wifi_settings_ui.ActionContext());
     wifi_settings_ui.Leave();
+    if (display != nullptr && esp_lv_adapter_lock(-1) == ESP_OK) {
+        // A resumed Guest can keep its retained frame without submitting a new
+        // scene. Remove the settings page now instead of waiting for that frame.
+        if (before_root_release_locked_ != nullptr) {
+            before_root_release_locked_(before_root_release_context_);
+        }
+        DeleteRootLocked();
+        platform::lvgl::RequestDisplayRefresh(display);
+        esp_lv_adapter_unlock();
+    }
 }
 
 void SquareSystemUiState::WatchGuestActions(host_ui::SystemUiActionSink action_sink, void* action_context) {
