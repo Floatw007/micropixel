@@ -10,6 +10,8 @@
 
 namespace micropixel::device {
 
+inline constexpr size_t kManagedNetworkAppIdMaxLength = 64U;
+
 struct ManagedNetworkInfo final {
     bool configured{};
     bool route_online{};
@@ -46,8 +48,8 @@ class ManagedNetwork {
    public:
     virtual ~ManagedNetwork() = default;
 
-    [[nodiscard]] virtual int32_t OpenSession(std::string_view app_id, ManagedNetworkCompletionSink sink,
-                                              void* context, uint32_t& session_out) = 0;
+    [[nodiscard]] virtual int32_t OpenSession(std::string_view app_id, ManagedNetworkCompletionSink sink, void* context,
+                                              uint32_t& session_out) = 0;
     virtual void CloseSession(uint32_t session) = 0;
     [[nodiscard]] virtual int32_t GetInfo(uint32_t session, ManagedNetworkInfo& info_out) const = 0;
     [[nodiscard]] virtual int32_t Start(uint32_t session, const ManagedNetworkRequest& request,

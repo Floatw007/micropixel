@@ -36,8 +36,7 @@ ServiceResult<micropixel_network_info_t> NetworkService::GetInfo() const {
     return wire;
 }
 
-ServiceResult<micropixel_network_start_response_t> NetworkService::Start(
-    const device::ManagedNetworkRequest& request) {
+ServiceResult<micropixel_network_start_response_t> NetworkService::Start(const device::ManagedNetworkRequest& request) {
     if (!valid()) return FailService<micropixel_network_start_response_t>(MICROPIXEL_STATUS_INTERNAL);
     uint32_t handle = 0U;
     const int32_t status = network_.Start(session_, request, handle);
@@ -75,8 +74,7 @@ void NetworkService::Suspend() {
 }
 
 bool NetworkService::Resume() {
-    return session_ != 0U ||
-           network_.OpenSession(app_id_.data(), OnComplete, this, session_) == MICROPIXEL_STATUS_OK;
+    return session_ != 0U || network_.OpenSession(app_id_.data(), OnComplete, this, session_) == MICROPIXEL_STATUS_OK;
 }
 
 void NetworkService::Shutdown() { Suspend(); }

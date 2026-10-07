@@ -65,13 +65,12 @@ bool RemoteIdentityStore::Load(RemoteIdentity& identity) const {
     size_t size = sizeof(*record_);
     const esp_err_t error = nvs_get_blob(handle, kIdentityKey, record_, &size);
     nvs_close(handle);
-    const bool valid =
-        error == ESP_OK && size == sizeof(*record_) && record_->version == kIdentityVersion &&
-        record_->auth_epoch != 0U && record_->device_id[0] != '\0' && record_->credential[0] != '\0' &&
-        ::strnlen(record_->device_id, sizeof(record_->device_id)) < sizeof(record_->device_id) &&
-        ::strnlen(record_->credential, sizeof(record_->credential)) < sizeof(record_->credential) &&
-        std::all_of(
-            record_->reserved, record_->reserved + sizeof(record_->reserved), [](uint8_t byte) { return byte == 0U; });
+    const bool valid = error == ESP_OK && size == sizeof(*record_) && record_->version == kIdentityVersion &&
+                       record_->auth_epoch != 0U && record_->device_id[0] != '\0' && record_->credential[0] != '\0' &&
+                       ::strnlen(record_->device_id, sizeof(record_->device_id)) < sizeof(record_->device_id) &&
+                       ::strnlen(record_->credential, sizeof(record_->credential)) < sizeof(record_->credential) &&
+                       std::all_of(record_->reserved, record_->reserved + sizeof(record_->reserved),
+                                   [](uint8_t byte) { return byte == 0U; });
     if (!valid) {
         return false;
     }

@@ -19,8 +19,8 @@
 #include "host/time/network_time.hpp"
 #include "host/ui/system_shell.hpp"
 #include "nvs_flash.h"
-#include "platform/network/network_route_source.hpp"
 #include "platform/network/managed_http_client.hpp"
+#include "platform/network/network_route_source.hpp"
 #if !CONFIG_MICROPIXEL_BOARD_NULL
 #include "platform/lvgl/fonts/system_fonts.hpp"
 #endif

@@ -7,8 +7,8 @@
 #include "device/contracts/graphics.hpp"
 #include "device/text.hpp"
 #include "esp_log.h"
-#include "runtime/guest_context.hpp"
 #include "runtime/abi/network_policy.hpp"
+#include "runtime/guest_context.hpp"
 #include "sdkconfig.h"
 
 namespace micropixel::runtime {
@@ -324,8 +324,7 @@ ServiceDescriptor NetworkServiceEndpoint::Describe() const {
 }
 
 int32_t NetworkServiceEndpoint::Call(uint32_t method_id, const uint8_t* request, uint32_t request_size,
-                                     uint8_t* response, uint32_t response_capacity,
-                                     uint32_t& response_size_out) {
+                                     uint8_t* response, uint32_t response_capacity, uint32_t& response_size_out) {
     if (method_id == MICROPIXEL_NETWORK_METHOD_GET_INFO) {
         if (!EmptyRequest(request_size)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
         return WriteResult<micropixel_network_info_t>(context_.NetworkInfo(), response, response_capacity,
@@ -335,8 +334,8 @@ int32_t NetworkServiceEndpoint::Call(uint32_t method_id, const uint8_t* request,
         micropixel_network_start_request_t wire{};
         if (!ReadVariableRequest(request, request_size, wire) || wire.size != request_size || wire.reserved0 != 0U ||
             wire.method < MICROPIXEL_NETWORK_HTTP_GET || wire.method > MICROPIXEL_NETWORK_HTTP_DELETE ||
-            wire.cache_mode > MICROPIXEL_NETWORK_CACHE_PERSISTENT_FALLBACK ||
-            wire.path_length == 0U || wire.path_length > MICROPIXEL_NETWORK_MAX_PATH_BYTES ||
+            wire.cache_mode > MICROPIXEL_NETWORK_CACHE_PERSISTENT_FALLBACK || wire.path_length == 0U ||
+            wire.path_length > MICROPIXEL_NETWORK_MAX_PATH_BYTES ||
             wire.idempotency_key_length > MICROPIXEL_NETWORK_MAX_IDEMPOTENCY_KEY_BYTES ||
             wire.body_length > MICROPIXEL_NETWORK_MAX_BODY_BYTES ||
             sizeof(wire) + wire.path_length + wire.body_length + wire.idempotency_key_length != request_size ||
@@ -367,17 +366,16 @@ int32_t NetworkServiceEndpoint::Call(uint32_t method_id, const uint8_t* request,
     if (method_id == MICROPIXEL_NETWORK_METHOD_READ) {
         micropixel_network_read_request_t wire{};
         if (!ReadRequest(request, request_size, wire) || wire.request_handle == 0U || wire.capacity == 0U ||
-            wire.capacity > MICROPIXEL_NETWORK_MAX_READ_BYTES ||
-            response == nullptr || response_capacity < sizeof(micropixel_network_read_response_t) + wire.capacity) {
+            wire.capacity > MICROPIXEL_NETWORK_MAX_READ_BYTES || response == nullptr ||
+            response_capacity < sizeof(micropixel_network_read_response_t) + wire.capacity) {
             response_size_out = sizeof(micropixel_network_read_response_t) + wire.capacity;
             return response == nullptr || response_capacity < response_size_out ? MICROPIXEL_STATUS_BUFFER_TOO_SMALL
                                                                                 : MICROPIXEL_STATUS_INVALID_ARGUMENT;
         }
         uint32_t total_length = 0U;
-        auto read = context_.NetworkRead(wire.request_handle, wire.offset,
-                                         std::span<uint8_t>(response + sizeof(micropixel_network_read_response_t),
-                                                            wire.capacity),
-                                         total_length);
+        auto read = context_.NetworkRead(
+            wire.request_handle, wire.offset,
+            std::span<uint8_t>(response + sizeof(micropixel_network_read_response_t), wire.capacity), total_length);
         if (!read) return read.error().status;
         if (*read > wire.capacity || *read > UINT16_MAX) return MICROPIXEL_STATUS_INTERNAL;
         micropixel_network_read_response_t header{};

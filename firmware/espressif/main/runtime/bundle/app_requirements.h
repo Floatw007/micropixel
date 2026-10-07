@@ -11,7 +11,8 @@ static const char* const kMicropixelAppCapabilities[MICROPIXEL_APP_CAPABILITY_CO
     "input.touch",      "input.keys",          "audio.output", "sensor.acceleration",
     "sensor.gyroscope", "sensor.magnetometer", "haptics",      "gpio"};
 static const char* const kMicropixelAppServices[MICROPIXEL_APP_SERVICE_COUNT] = {
-    "system", "input", "graphics", "audio", "storage", "timer", "resource", "device", "sensor", "gpio", "haptics", "network"};
+    "system",   "input",  "graphics", "audio", "storage", "timer",
+    "resource", "device", "sensor",   "gpio",  "haptics", "network"};
 
 typedef struct {
     uint32_t core_abi;

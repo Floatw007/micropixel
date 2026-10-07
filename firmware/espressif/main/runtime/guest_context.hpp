@@ -278,9 +278,8 @@ class GuestContext final {
         const device::ManagedNetworkRequest& request) {
         return network_.Start(request);
     }
-    [[nodiscard]] ServiceResult<uint32_t> NetworkRead(uint32_t handle, uint32_t offset,
-                                                       std::span<uint8_t> destination,
-                                                       uint32_t& total_length_out) const {
+    [[nodiscard]] ServiceResult<uint32_t> NetworkRead(uint32_t handle, uint32_t offset, std::span<uint8_t> destination,
+                                                      uint32_t& total_length_out) const {
         return network_.Read(handle, offset, destination, total_length_out);
     }
     [[nodiscard]] ServiceResult<void> NetworkCancel(uint32_t handle) { return network_.Cancel(handle); }

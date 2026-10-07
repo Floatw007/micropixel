@@ -14,7 +14,6 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "host/network/network.hpp"
-#include "runtime/bundle/bundle_format.h"
 
 namespace micropixel::platform::network {
 
@@ -37,15 +36,14 @@ class ManagedHttpClient final : public device::ManagedNetwork {
 
     [[nodiscard]] bool valid() const { return mutex_ != nullptr && queue_ != nullptr && workers_started_ == 2U; }
 
-    [[nodiscard]] int32_t OpenSession(std::string_view app_id, device::ManagedNetworkCompletionSink sink,
-                                      void* context, uint32_t& session_out) override;
+    [[nodiscard]] int32_t OpenSession(std::string_view app_id, device::ManagedNetworkCompletionSink sink, void* context,
+                                      uint32_t& session_out) override;
     void CloseSession(uint32_t session) override;
     [[nodiscard]] int32_t GetInfo(uint32_t session, device::ManagedNetworkInfo& info_out) const override;
     [[nodiscard]] int32_t Start(uint32_t session, const device::ManagedNetworkRequest& request,
                                 uint32_t& handle_out) override;
-    [[nodiscard]] int32_t Read(uint32_t session, uint32_t handle, uint32_t offset,
-                               std::span<uint8_t> destination, uint32_t& length_out,
-                               uint32_t& total_length_out) const override;
+    [[nodiscard]] int32_t Read(uint32_t session, uint32_t handle, uint32_t offset, std::span<uint8_t> destination,
+                               uint32_t& length_out, uint32_t& total_length_out) const override;
     [[nodiscard]] int32_t Cancel(uint32_t session, uint32_t handle) override;
     [[nodiscard]] int32_t Close(uint32_t session, uint32_t handle) override;
 
@@ -164,7 +162,7 @@ class ManagedHttpClient final : public device::ManagedNetwork {
     uint32_t session_generation_{};
     uint32_t active_session_{};
     uint32_t cache_use_sequence_{};
-    std::array<char, MICROPIXEL_BUNDLE_APP_ID_MAX_LENGTH + 1U> session_app_id_{};
+    std::array<char, device::kManagedNetworkAppIdMaxLength + 1U> session_app_id_{};
     device::ManagedNetworkCompletionSink completion_sink_{};
     void* completion_context_{};
 };

@@ -47,8 +47,9 @@ bool ValidOrigin(std::string_view origin) {
     // prevents path-prefix tricks when the Guest supplies a relative path.
     for (size_t index = 8U; index < origin.size(); ++index) {
         const unsigned char byte = static_cast<unsigned char>(origin[index]);
-        if (byte <= 0x20U || byte >= 0x7fU || origin[index] == '/' || origin[index] == '?' ||
-            origin[index] == '#' || origin[index] == '@') return false;
+        if (byte <= 0x20U || byte >= 0x7fU || origin[index] == '/' || origin[index] == '?' || origin[index] == '#' ||
+            origin[index] == '@')
+            return false;
     }
     return true;
 }
@@ -56,8 +57,9 @@ bool ValidOrigin(std::string_view origin) {
 bool ValidAppId(std::string_view app_id) {
     if (app_id.empty()) return false;
     for (const char value : app_id) {
-        if (!((value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') ||
-              (value >= '0' && value <= '9') || value == '.' || value == '_' || value == '-')) return false;
+        if (!((value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') || (value >= '0' && value <= '9') ||
+              value == '.' || value == '_' || value == '-'))
+            return false;
     }
     return true;
 }
@@ -147,14 +149,12 @@ bool ManagedHttpClient::TakeLock() const {
 
 void ManagedHttpClient::GiveLock() const { (void)xSemaphoreGive(mutex_); }
 
-bool ManagedHttpClient::SessionMatches(uint32_t session) const {
-    return session != 0U && session == active_session_;
-}
+bool ManagedHttpClient::SessionMatches(uint32_t session) const { return session != 0U && session == active_session_; }
 
 int32_t ManagedHttpClient::OpenSession(std::string_view app_id, device::ManagedNetworkCompletionSink sink,
                                        void* context, uint32_t& session_out) {
     session_out = 0U;
-    if (!valid() || app_id.empty() || app_id.size() > MICROPIXEL_BUNDLE_APP_ID_MAX_LENGTH || sink == nullptr ||
+    if (!valid() || app_id.empty() || app_id.size() > device::kManagedNetworkAppIdMaxLength || sink == nullptr ||
         context == nullptr || !TakeLock()) {
         return MICROPIXEL_STATUS_INVALID_ARGUMENT;
     }
@@ -217,13 +217,11 @@ int32_t ManagedHttpClient::GetInfo(uint32_t session, device::ManagedNetworkInfo&
 }
 
 bool ManagedHttpClient::AnyRequestsLocked() const {
-    return std::any_of(slots_.begin(), slots_.end(), [](const RequestSlot& slot) {
-        return slot.state != SlotState::kFree;
-    });
+    return std::any_of(slots_.begin(), slots_.end(),
+                       [](const RequestSlot& slot) { return slot.state != SlotState::kFree; });
 }
 
-int32_t ManagedHttpClient::Start(uint32_t session, const device::ManagedNetworkRequest& request,
-                                 uint32_t& handle_out) {
+int32_t ManagedHttpClient::Start(uint32_t session, const device::ManagedNetworkRequest& request, uint32_t& handle_out) {
     handle_out = 0U;
     if (!valid() || request.path.empty() || request.path.size() > MICROPIXEL_NETWORK_MAX_PATH_BYTES ||
         request.body.size() > MICROPIXEL_NETWORK_MAX_BODY_BYTES ||
@@ -315,9 +313,8 @@ const ManagedHttpClient::RequestSlot* ManagedHttpClient::Find(uint32_t session, 
     return const_cast<ManagedHttpClient*>(this)->Find(session, handle);
 }
 
-int32_t ManagedHttpClient::Read(uint32_t session, uint32_t handle, uint32_t offset,
-                                std::span<uint8_t> destination, uint32_t& length_out,
-                                uint32_t& total_length_out) const {
+int32_t ManagedHttpClient::Read(uint32_t session, uint32_t handle, uint32_t offset, std::span<uint8_t> destination,
+                                uint32_t& length_out, uint32_t& total_length_out) const {
     length_out = 0U;
     total_length_out = 0U;
     if (destination.empty() || !TakeLock()) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
@@ -387,9 +384,7 @@ void ManagedHttpClient::ReleaseSlot(RequestSlot& slot) {
     slot.generation = generation;
 }
 
-void ManagedHttpClient::WorkerEntry(void* context) {
-    static_cast<ManagedHttpClient*>(context)->WorkerLoop();
-}
+void ManagedHttpClient::WorkerEntry(void* context) { static_cast<ManagedHttpClient*>(context)->WorkerLoop(); }
 
 void ManagedHttpClient::WorkerLoop() {
     while (true) {
@@ -416,8 +411,8 @@ void ManagedHttpClient::Execute(size_t slot_index) {
     // Server failures are transport-successful, but a GET may still serve its
     // last known good snapshot. Authentication and other 4xx responses always
     // reach the Guest unchanged.
-    if (status == MICROPIXEL_STATUS_OK && slot.method == MICROPIXEL_NETWORK_HTTP_GET &&
-        slot.http_status >= 500U) status = MICROPIXEL_STATUS_INTERNAL;
+    if (status == MICROPIXEL_STATUS_OK && slot.method == MICROPIXEL_NETWORK_HTTP_GET && slot.http_status >= 500U)
+        status = MICROPIXEL_STATUS_INTERNAL;
     if (status != MICROPIXEL_STATUS_OK && !slot.cancelled.load() && slot.method == MICROPIXEL_NETWORK_HTTP_GET &&
         slot.cache_mode != MICROPIXEL_NETWORK_CACHE_NONE && UseFallbackCache(slot)) {
         status = MICROPIXEL_STATUS_OK;
@@ -470,7 +465,8 @@ int32_t ManagedHttpClient::PerformHttp(RequestSlot& slot) {
     const std::time_t now = std::time(nullptr);
     if (!firmware::system_time::IsTrustedUtcTime(now)) return MICROPIXEL_STATUS_STALE_STATE;
 
-    const int url_size = std::snprintf(slot.url.data(), slot.url.size(), "%s%s", profile_.origin.data(), slot.path.data());
+    const int url_size =
+        std::snprintf(slot.url.data(), slot.url.size(), "%s%s", profile_.origin.data(), slot.path.data());
     if (url_size <= 0 || static_cast<size_t>(url_size) >= slot.url.size()) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
     esp_http_client_config_t config{};
     config.url = slot.url.data();
@@ -491,8 +487,7 @@ int32_t ManagedHttpClient::PerformHttp(RequestSlot& slot) {
     }
     if (slot.body_length != 0U) {
         (void)esp_http_client_set_header(client, "Content-Type", "application/json");
-        (void)esp_http_client_set_post_field(client, reinterpret_cast<const char*>(slot.body.data()),
-                                             slot.body_length);
+        (void)esp_http_client_set_post_field(client, reinterpret_cast<const char*>(slot.body.data()), slot.body_length);
     }
     slot.receive_offset = 0U;
     slot.response_too_large = false;
@@ -541,14 +536,14 @@ bool ManagedHttpClient::LoadMemoryCache(std::string_view path, RequestSlot& slot
     slot.http_status = found->http_status;
     slot.response_source = MICROPIXEL_NETWORK_RESPONSE_MEMORY_CACHE;
     const int64_t now = std::time(nullptr);
-    slot.cache_age_seconds = now > found->stored_at_seconds ? static_cast<uint32_t>(now - found->stored_at_seconds) : 0U;
+    slot.cache_age_seconds =
+        now > found->stored_at_seconds ? static_cast<uint32_t>(now - found->stored_at_seconds) : 0U;
     found->use_sequence = ++cache_use_sequence_;
     GiveLock();
     return true;
 }
 
-void ManagedHttpClient::StoreMemoryCache(std::string_view path, std::span<const uint8_t> bytes,
-                                         uint16_t http_status) {
+void ManagedHttpClient::StoreMemoryCache(std::string_view path, std::span<const uint8_t> bytes, uint16_t http_status) {
     if (!TakeLock()) return;
     MemoryCache* destination = nullptr;
     for (MemoryCache& cache : memory_cache_) {
@@ -559,10 +554,9 @@ void ManagedHttpClient::StoreMemoryCache(std::string_view path, std::span<const 
         if (destination == nullptr && cache.bytes == nullptr) destination = &cache;
     }
     if (destination == nullptr) {
-        destination = &*std::min_element(memory_cache_.begin(), memory_cache_.end(),
-                                         [](const MemoryCache& left, const MemoryCache& right) {
-                                             return left.use_sequence < right.use_sequence;
-                                         });
+        destination = &*std::min_element(
+            memory_cache_.begin(), memory_cache_.end(),
+            [](const MemoryCache& left, const MemoryCache& right) { return left.use_sequence < right.use_sequence; });
     }
     uint8_t* replacement = nullptr;
     if (!bytes.empty()) {
@@ -615,8 +609,8 @@ bool ManagedHttpClient::LoadPersistentCache(std::string_view path, RequestSlot& 
         slot.http_status = header.http_status;
         slot.response_source = MICROPIXEL_NETWORK_RESPONSE_PERSISTENT_CACHE;
         const int64_t now = std::time(nullptr);
-        slot.cache_age_seconds = now > header.stored_at_seconds ? static_cast<uint32_t>(now - header.stored_at_seconds)
-                                                                : 0U;
+        slot.cache_age_seconds =
+            now > header.stored_at_seconds ? static_cast<uint32_t>(now - header.stored_at_seconds) : 0U;
     }
     heap_caps_free(buffer);
     if (valid) StoreMemoryCache(path, std::span<const uint8_t>(slot.response, slot.response_length), slot.http_status);
@@ -643,7 +637,8 @@ void ManagedHttpClient::StorePersistentCache(std::string_view path, std::span<co
             if (old != nullptr && nvs_get_blob(handle, key.data(), old, &previous_size) == ESP_OK) {
                 std::memcpy(&previous, old, sizeof(previous));
                 const int64_t now = std::time(nullptr);
-                const auto old_body = std::span<const uint8_t>(old + sizeof(previous), previous_size - sizeof(previous));
+                const auto old_body =
+                    std::span<const uint8_t>(old + sizeof(previous), previous_size - sizeof(previous));
                 has_previous = previous.magic == kCacheMagic && previous.version == 1U &&
                                previous.body_length == old_body.size() &&
                                previous.body_crc32 == esp_rom_crc32_le(0U, old_body.data(), old_body.size());
@@ -712,12 +707,12 @@ int32_t ManagedHttpClient::Configure(std::span<const uint8_t> blob) {
     UploadHeader header{};
     if (blob.size() < sizeof(header)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
     std::memcpy(&header, blob.data(), sizeof(header));
-    const size_t payload_size = static_cast<size_t>(header.origin_length) + header.ca_length + header.token_length +
-                                header.app_id_length;
+    const size_t payload_size =
+        static_cast<size_t>(header.origin_length) + header.ca_length + header.token_length + header.app_id_length;
     if (header.magic != kProfileMagic || header.version != kProfileVersion || header.reserved != 0U ||
         header.origin_length == 0U || header.origin_length > 256U || header.ca_length == 0U ||
         header.ca_length > 4096U || header.token_length == 0U || header.token_length > 1024U ||
-        header.app_id_length == 0U || header.app_id_length > MICROPIXEL_BUNDLE_APP_ID_MAX_LENGTH ||
+        header.app_id_length == 0U || header.app_id_length > device::kManagedNetworkAppIdMaxLength ||
         blob.size() != sizeof(header) + payload_size) {
         return MICROPIXEL_STATUS_INVALID_ARGUMENT;
     }
@@ -730,14 +725,15 @@ int32_t ManagedHttpClient::Configure(std::span<const uint8_t> blob) {
     const std::string_view token(reinterpret_cast<const char*>(token_start), header.token_length);
     const std::string_view app_id(reinterpret_cast<const char*>(app_id_start), header.app_id_length);
     if (!ValidOrigin(origin) || ca.find("-----BEGIN CERTIFICATE-----") == std::string_view::npos ||
-        !PrintableSecret(token) || !ValidAppId(app_id)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        !PrintableSecret(token) || !ValidAppId(app_id))
+        return MICROPIXEL_STATUS_INVALID_ARGUMENT;
     if (!TakeLock()) return MICROPIXEL_STATUS_INTERNAL;
     if (AnyRequestsLocked()) {
         GiveLock();
         return MICROPIXEL_STATUS_WOULD_BLOCK;
     }
-    auto* candidate = static_cast<ProfileRecord*>(
-        heap_caps_calloc(1U, sizeof(ProfileRecord), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    auto* candidate =
+        static_cast<ProfileRecord*>(heap_caps_calloc(1U, sizeof(ProfileRecord), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (candidate == nullptr) {
         GiveLock();
         return MICROPIXEL_STATUS_RESOURCE_EXHAUSTED;

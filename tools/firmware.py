@@ -427,7 +427,10 @@ def idf_python(
     if env_path:
         env_root = Path(env_path).expanduser()
         relative = Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
-        candidate = (env_root / relative).resolve()
+        # Keep the virtual-environment launcher path intact.  Resolving the
+        # POSIX `bin/python` symlink to /usr/bin/python would discard the venv
+        # context and make ESP-IDF packages such as esptool unavailable.
+        candidate = (env_root / relative).absolute()
         if candidate.is_file():
             return candidate
 

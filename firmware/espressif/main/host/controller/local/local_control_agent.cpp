@@ -906,8 +906,8 @@ void LocalControlAgent::HandleTerminalConfigureBegin(uint32_t request_id, std::s
     std::array<uint8_t, 32U> sha256{};
     if (terminal_config_.data != nullptr || !ParseUnsigned(size_text, size) || size == 0U ||
         size > kMaximumTerminalProfileBytes || !ParseSha256(sha256_text, sha256) || !TrimLeft(arguments).empty()) {
-        (void)QueueResponse(request_id, "ERROR", terminal_config_.data != nullptr ? "terminal_config_busy"
-                                                                                  : "invalid_terminal_config");
+        (void)QueueResponse(request_id, "ERROR",
+                            terminal_config_.data != nullptr ? "terminal_config_busy" : "invalid_terminal_config");
         return;
     }
     uint8_t* data = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -934,9 +934,9 @@ void LocalControlAgent::HandleTerminalConfigureChunk(uint32_t request_id, std::s
     }
     size_t decoded_size = 0U;
     const size_t remaining = terminal_config_.size - terminal_config_.received;
-    const int status = mbedtls_base64_decode(terminal_config_.data + terminal_config_.received, remaining,
-                                             &decoded_size, reinterpret_cast<const unsigned char*>(encoded.data()),
-                                             encoded.size());
+    const int status =
+        mbedtls_base64_decode(terminal_config_.data + terminal_config_.received, remaining, &decoded_size,
+                              reinterpret_cast<const unsigned char*>(encoded.data()), encoded.size());
     if (status != 0 || decoded_size == 0U || decoded_size > remaining) {
         (void)QueueResponse(request_id, "ERROR", "invalid_terminal_config_chunk");
         return;
@@ -948,8 +948,7 @@ void LocalControlAgent::HandleTerminalConfigureChunk(uint32_t request_id, std::s
 }
 
 void LocalControlAgent::HandleTerminalConfigureCommit(uint32_t request_id, std::string_view arguments) {
-    if (!TrimLeft(arguments).empty() || terminal_config_.data == nullptr ||
-        request_id != terminal_config_.request_id) {
+    if (!TrimLeft(arguments).empty() || terminal_config_.data == nullptr || request_id != terminal_config_.request_id) {
         (void)QueueResponse(request_id, "ERROR", "no_terminal_config_session");
         return;
     }
@@ -970,16 +969,15 @@ void LocalControlAgent::HandleTerminalConfigureCommit(uint32_t request_id, std::
     const int32_t status = managed_network_.Configure({terminal_config_.data, terminal_config_.size});
     AbortTerminalConfigure();
     if (status != MICROPIXEL_STATUS_OK) {
-        (void)QueueResponse(request_id, "ERROR", status == MICROPIXEL_STATUS_WOULD_BLOCK ? "terminal_busy"
-                                                                                         : "invalid_terminal_config");
+        (void)QueueResponse(request_id, "ERROR",
+                            status == MICROPIXEL_STATUS_WOULD_BLOCK ? "terminal_busy" : "invalid_terminal_config");
         return;
     }
     (void)QueueResponse(request_id, "OK", "TERMINAL_CONFIGURED");
 }
 
 void LocalControlAgent::HandleTerminalConfigureAbort(uint32_t request_id, std::string_view arguments) {
-    if (!TrimLeft(arguments).empty() || terminal_config_.data == nullptr ||
-        request_id != terminal_config_.request_id) {
+    if (!TrimLeft(arguments).empty() || terminal_config_.data == nullptr || request_id != terminal_config_.request_id) {
         (void)QueueResponse(request_id, "ERROR", "no_terminal_config_session");
         return;
     }
@@ -1012,13 +1010,13 @@ void LocalControlAgent::HandleTerminalStatus(uint32_t request_id, std::string_vi
     encoded_origin[origin_size] = '\0';
     encoded_app_id[app_id_size] = '\0';
     std::array<char, 512U> detail{};
-    const int written = std::snprintf(
-        detail.data(), detail.size(), "TERMINAL_STATUS %u %" PRIu32 " %" PRIu64 " %s %s %s %s",
-        status.configured ? 1U : 0U, status.revision, status.store_id,
-        origin_size == 0U ? "-" : reinterpret_cast<const char*>(encoded_origin.data()),
-        app_id_size == 0U ? "-" : reinterpret_cast<const char*>(encoded_app_id.data()),
-        status.certificate_fingerprint[0] == '\0' ? "-" : status.certificate_fingerprint.data(),
-        status.token_suffix[0] == '\0' ? "-" : status.token_suffix.data());
+    const int written =
+        std::snprintf(detail.data(), detail.size(), "TERMINAL_STATUS %u %" PRIu32 " %" PRIu64 " %s %s %s %s",
+                      status.configured ? 1U : 0U, status.revision, status.store_id,
+                      origin_size == 0U ? "-" : reinterpret_cast<const char*>(encoded_origin.data()),
+                      app_id_size == 0U ? "-" : reinterpret_cast<const char*>(encoded_app_id.data()),
+                      status.certificate_fingerprint[0] == '\0' ? "-" : status.certificate_fingerprint.data(),
+                      status.token_suffix[0] == '\0' ? "-" : status.token_suffix.data());
     if (written <= 0 || static_cast<size_t>(written) >= detail.size()) {
         (void)QueueResponse(request_id, "ERROR", "response_encoding_failed");
         return;

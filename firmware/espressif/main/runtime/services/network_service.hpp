@@ -5,8 +5,8 @@
 #include <string_view>
 
 #include "device/device_services.hpp"
-#include "runtime/event_queue.hpp"
 #include "runtime/bundle/bundle_format.h"
+#include "runtime/event_queue.hpp"
 #include "runtime/services/service_result.hpp"
 
 namespace micropixel::runtime {
@@ -23,7 +23,8 @@ class NetworkService final {
 
     [[nodiscard]] bool valid() const { return session_ != 0U; }  // NOLINT(readability-identifier-naming)
     [[nodiscard]] ServiceResult<micropixel_network_info_t> GetInfo() const;
-    [[nodiscard]] ServiceResult<micropixel_network_start_response_t> Start(const device::ManagedNetworkRequest& request);
+    [[nodiscard]] ServiceResult<micropixel_network_start_response_t> Start(
+        const device::ManagedNetworkRequest& request);
     [[nodiscard]] ServiceResult<uint32_t> Read(uint32_t handle, uint32_t offset, std::span<uint8_t> destination,
                                                uint32_t& total_length_out) const;
     [[nodiscard]] ServiceResult<void> Cancel(uint32_t handle);

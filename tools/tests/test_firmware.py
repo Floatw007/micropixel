@@ -3,8 +3,10 @@ import contextlib
 from dataclasses import replace
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -103,6 +105,21 @@ class FirmwareProfileTest(unittest.TestCase):
             profile = replace(self.profiles["esp32-p4-function-ev"], build_dir=build_dir)
             self.assertEqual(firmware.idf_python(profile, environ={}), python.resolve())
 
+    @unittest.skipIf(os.name == "nt", "POSIX virtual environments use bin/python symlinks")
+    def test_active_idf_python_keeps_virtual_environment_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_root = Path(directory)
+            launcher = env_root / "bin" / "python"
+            launcher.parent.mkdir()
+            launcher.symlink_to(sys.executable)
+            profile = self.profiles["esp32-p4-function-ev"]
+            self.assertEqual(
+                firmware.idf_python(
+                    profile, environ={"IDF_PYTHON_ENV_PATH": str(env_root)}
+                ),
+                launcher.absolute(),
+            )
+
     def test_windows_idf_launcher_resolves_to_active_idf_script(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             idf_path = Path(directory)
@@ -110,9 +127,10 @@ class FirmwareProfileTest(unittest.TestCase):
             expected.parent.mkdir()
             expected.write_bytes(b"")
             with (
-                mock.patch.object(firmware.os, "name", "nt"),
+                mock.patch.object(firmware, "os") as firmware_os,
                 mock.patch.object(firmware.shutil, "which", return_value="C:/tools/idf.py.exe"),
             ):
+                firmware_os.name = "nt"
                 self.assertEqual(
                     firmware.locate_idf_py({"IDF_PATH": str(idf_path)}), expected.resolve()
                 )

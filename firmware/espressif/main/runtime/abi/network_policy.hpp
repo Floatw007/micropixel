@@ -10,14 +10,16 @@ namespace micropixel::runtime {
 
 [[nodiscard]] inline bool ValidRelativeNetworkPath(std::string_view path) {
     if (path.empty() || path.size() > MICROPIXEL_NETWORK_MAX_PATH_BYTES || path.front() != '/' ||
-        (path.size() > 1U && path[1] == '/')) return false;
+        (path.size() > 1U && path[1] == '/'))
+        return false;
     for (size_t index = 0U; index < path.size(); ++index) {
         const unsigned char character = static_cast<unsigned char>(path[index]);
         if (character < 0x21U || character > 0x7eU || character == '\\') return false;
         if (character == '.' && index + 1U < path.size() && path[index + 1U] == '.' &&
             (index == 0U || path[index - 1U] == '/') &&
             (index + 2U == path.size() || path[index + 2U] == '/' || path[index + 2U] == '?' ||
-             path[index + 2U] == '#')) return false;
+             path[index + 2U] == '#'))
+            return false;
     }
     return true;
 }

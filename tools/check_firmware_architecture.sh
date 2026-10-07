@@ -221,8 +221,8 @@ if rg -n '\besp_restart[[:space:]]*\(' "$source_root/firmware_app.cpp"; then
 fi
 
 abi_file_count="$(find "$source_root/runtime/abi" -maxdepth 1 -type f | wc -l | tr -d ' ')"
-if [[ "$abi_file_count" != "7" ]]; then
-    echo "runtime/abi must remain a cohesive seven-file boundary; found $abi_file_count files." >&2
+if [[ "$abi_file_count" != "8" ]]; then
+    echo "runtime/abi must remain a cohesive eight-file boundary; found $abi_file_count files." >&2
     exit 1
 fi
 

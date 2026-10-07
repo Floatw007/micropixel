@@ -25,6 +25,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/host_strings.hp
     DEPENDS ${catalogs} "${workspace_root}/tools/generate_localization.py")
 add_executable(system_menu_test ../test_system_menu.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/generated/host_strings.hpp"
+    "${workspace_root}/firmware/espressif/main/platform/lvgl/lvgl_wakeup.cpp"
     "${workspace_root}/firmware/espressif/main/host/ui/lvgl/square_common/system_menu_ui.cpp"
     "${workspace_root}/firmware/espressif/main/host/ui/lvgl/square_common/hall_card_ui.cpp"
     "${workspace_root}/firmware/espressif/main/host/ui/lvgl/square_common/launch_screen_ui.cpp"
@@ -37,6 +38,7 @@ target_link_libraries(system_menu_test PRIVATE lvgl)
 
 add_executable(cellular_ui_test ../test_cellular_ui.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/generated/host_strings.hpp"
+    "${workspace_root}/firmware/espressif/main/platform/lvgl/lvgl_wakeup.cpp"
     "${workspace_root}/firmware/espressif/main/host/ui/lvgl/square_common/status_layer_ui.cpp")
 target_include_directories(cellular_ui_test PRIVATE stubs ../firmware_stubs
     "${CMAKE_CURRENT_BINARY_DIR}/generated" "${workspace_root}/firmware/espressif/main" "${workspace_root}/guest")
@@ -46,6 +48,7 @@ target_link_libraries(cellular_ui_test PRIVATE lvgl)
 
 add_executable(wifi_ui_test ../test_wifi_ui.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/generated/host_strings.hpp"
+    "${workspace_root}/firmware/espressif/main/platform/lvgl/lvgl_wakeup.cpp"
     "${workspace_root}/firmware/espressif/main/host/ui/lvgl/square_common/wifi_settings_ui.cpp"
     "${workspace_root}/firmware/espressif/main/host/ui/lvgl/square_common/default_keyboard.cpp")
 target_include_directories(wifi_ui_test PRIVATE stubs ../firmware_stubs
