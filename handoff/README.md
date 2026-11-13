@@ -1,8 +1,8 @@
 # MicroPixel 当前开发交接
 
-更新时间：2026-11-12
+更新时间：2026-11-13
 当前分支：`codex/function-ev-board`
-当前提交：`2b9c696`（与 `origin/codex/function-ev-board` 一致）
+当前提交：`b454e24`（与 `origin/codex/function-ev-board` 一致）
 
 这是给下一位智能体的临时交接文件。开始工作前必须先阅读仓库根目录的
 [`AGENTS.md`](../AGENTS.md)，其中包含架构边界、真机安全规则、历史验证记录和更详细的命令。
@@ -13,8 +13,10 @@
 你正在继续 MicroPixel 的 ESP32-P4 Function EV / Bear 多媒体开发工作。
 
 仓库位于当前工作区的 micropixel 目录。先完整阅读 AGENTS.md 和 handoff/README.md，然后检查
-git status、当前进程、/dev/ttyACM0 是否存在以及 fuser -v /dev/ttyACM0。当前工作区包含大量有意保留的
-未提交改动：不要 reset、clean、checkout、覆盖或丢弃任何文件，也不要仅按 Host/Guest 目录机械拆分提交。
+git status、当前进程、/dev/ttyACM0 是否存在以及 fuser -v /dev/ttyACM0。当前分支已将这一阶段的源码和文档
+同步到 `b454e24`；继续开发时不要 reset、clean、checkout、覆盖或丢弃任何文件，也不要仅按 Host/Guest
+目录机械拆分提交。`handoff/diagnostics/` 下的固件、ELF、截图和串口记录只保留在本机，按 `.gitignore`
+规则不提交。
 
 项目当前已经具备 Function EV 板级和 Ubuntu 构建基线；正在交付 Voice/System 端到端 ABI、Bear、中文
 字体和设置，以及音频、Direct Surface、Wi-Fi、PSRAM、屏幕休眠稳定性修复。Voice 使用服务 ID 24，
@@ -62,13 +64,12 @@ Runtime → Device contracts ← Platform
 
 ## 当前工作区状态
 
-- 本轮开始时 99 个已跟踪文件有修改；2026-11-05 维护批次结束后为 119 个，约 2722 行新增、
-  307 行删除。
-- 39 个非忽略的新增文件，包括 Voice 合同与服务、Host VoiceEngine、Guest Voice/System SDK、Bear、
-  system-diagnostics、vector-benchmark 和 `services/voice-gateway/`。
-- 没有暂存内容，也没有为这批改动创建提交。
-- `git diff --check` 当前通过。
-- `.env`、pytest 缓存、`__pycache__` 和构建目录已经由现有 `.gitignore` 忽略，不要重复添加规则。
+- 2026-11-13 已将当前阶段源码、Voice/Bear/System 功能和交接文档提交为 `b454e24`，并推送到
+  `origin/codex/function-ev-board`。
+- 提交包含 167 个源码和文档文件；固件、ELF、截图和串口记录没有提交，仍在本机的
+  `handoff/diagnostics/`。
+- 推送后工作区无未提交改动；提交前 `git diff --check` 通过。
+- `.env`、pytest 缓存、`__pycache__`、构建目录和硬件诊断产物由 `.gitignore` 忽略。
 
 建议按交付检查点审核，而不是机械规定每个目录一个提交：
 
@@ -401,7 +402,8 @@ ${HOME}/.codex/private/micropixel-risk-20261105/
 - 旧 2026-10-19 固件 ELF
   `703f4f9684e24f7d0b30d4b1498ee05f31dd7b6a1b2772d5bf4aa4a0947e26e7` 仅保存在私有证据目录，
   用于旧日志/旧 panic 符号化；不要用新 ELF 解释旧固件日志。
-- 工作区没有暂存内容或新提交；`.env`、pytest 缓存和构建目录仍由既有 `.gitignore` 忽略。
+- （截至 2026-11-05 的历史状态）当时工作区没有暂存内容或新提交；`.env`、pytest 缓存和构建目录仍由既有
+  `.gitignore` 忽略。
 
 ### 仍未验证
 
