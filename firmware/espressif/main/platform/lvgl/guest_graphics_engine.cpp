@@ -1275,7 +1275,7 @@ int32_t GuestGraphicsEngine::PresentDirectSurface(const device::DirectSurfacePre
     return direct_surface_presenter_.Present(presentation);
 }
 
-void GuestGraphicsEngine::SuspendDirectSurface() { direct_surface_presenter_.Suspend(); }
+int32_t GuestGraphicsEngine::SuspendDirectSurface() { return direct_surface_presenter_.Suspend(); }
 
 void GuestGraphicsEngine::ResumeDirectSurface() { direct_surface_presenter_.Resume(); }
 

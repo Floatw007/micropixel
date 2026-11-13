@@ -550,6 +550,9 @@ void WifiSettingsUi::SheetForgetEvent(lv_event_t* event) {
 void WifiSettingsUi::OverlayCancelEvent(lv_event_t* event) {
     auto* ui = static_cast<WifiSettingsUi*>(lv_event_get_user_data(event));
     if (ui != nullptr) {
+        if (ui->password_attempt_active_) {
+            ui->EmitNetworkAction(host_ui::SystemUiActionType::kDisconnectWifi, ui->password_network_);
+        }
         ui->action_sheet_visible_ = false;
         ui->password_visible_ = false;
         ui->password_attempt_active_ = false;

@@ -6,12 +6,19 @@ int main() {
     Application app;
     auto renderer = app.renderer();
     micropixel_service_info_t service{};
+    // Neither a minor past the Host's nor a higher major is accepted; both are
+    // rejected before any handle is handed out.
     if (micropixel_service_open(MICROPIXEL_SERVICE_RESOURCE, MICROPIXEL_INTERFACE_VERSION(1, 2), &service,
                                 sizeof(service)) != MICROPIXEL_STATUS_VERSION_MISMATCH)
         return 101;
     if (micropixel_service_open(MICROPIXEL_SERVICE_RESOURCE, MICROPIXEL_INTERFACE_VERSION(2, 0), &service,
-                                sizeof(service)) != MICROPIXEL_STATUS_OK)
+                                sizeof(service)) != MICROPIXEL_STATUS_VERSION_MISMATCH)
         return 102;
+    if (micropixel_service_open(
+            MICROPIXEL_SERVICE_RESOURCE,
+            MICROPIXEL_INTERFACE_VERSION(MICROPIXEL_RESOURCE_INTERFACE_MAJOR, MICROPIXEL_RESOURCE_INTERFACE_MINOR),
+            &service, sizeof(service)) != MICROPIXEL_STATUS_OK)
+        return 109;
     micropixel_dynamic_texture_create_request_t invalid{};
     invalid.size = sizeof(invalid);
     invalid.width = invalid.height = 2;

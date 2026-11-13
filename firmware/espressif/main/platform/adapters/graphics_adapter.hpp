@@ -23,7 +23,7 @@ struct GraphicsOperations final {
     int32_t (*create_direct_surface)(void*, const device::DirectSurfaceConfig&, const device::DirectSurfaceReleaseSink&,
                                      device::DirectSurfaceInfo&){};
     int32_t (*present_direct_surface)(void*, const device::DirectSurfacePresentation&){};
-    void (*suspend_direct_surface)(void*){};
+    int32_t (*suspend_direct_surface)(void*){};
     void (*resume_direct_surface)(void*){};
     int32_t (*destroy_direct_surface)(void*){};
 };
@@ -52,7 +52,7 @@ class GraphicsAdapter final : public device::Graphics {
                                               const device::DirectSurfaceReleaseSink& sink,
                                               device::DirectSurfaceInfo& info_out) override;
     [[nodiscard]] int32_t PresentDirectSurface(const device::DirectSurfacePresentation& presentation) override;
-    void SuspendDirectSurface() override;
+    [[nodiscard]] int32_t SuspendDirectSurface() override;
     void ResumeDirectSurface() override;
     [[nodiscard]] int32_t DestroyDirectSurface() override;
 

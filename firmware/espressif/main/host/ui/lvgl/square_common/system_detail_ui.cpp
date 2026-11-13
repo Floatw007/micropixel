@@ -13,6 +13,7 @@ void SystemDetailUi::ResetActiveScreen() {
     action_context_ = nullptr;
     power_switch_ = nullptr;
     power_timeout_ = nullptr;
+    display_sleep_timeout_ = nullptr;
     appearance_options_ = {};
     remote_control_scroll_ = nullptr;
     remote_control_scroll_offset_ = 0;

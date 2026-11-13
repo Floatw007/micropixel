@@ -10,6 +10,7 @@ namespace micropixel::host_ui::lvgl::square_common {
 namespace {
 using system_detail_internal::Header;
 using system_detail_internal::kAutoSleepTimeoutMinutes;
+using system_detail_internal::kDisplaySleepTimeoutMinutes;
 using system_detail_internal::Label;
 using system_detail_internal::Panel;
 using system_detail_internal::Scroll;
@@ -38,13 +39,18 @@ void SystemDetailUi::RenderPowerManagementLocked() {
     lv_obj_clean(root_);
     lv_obj_set_style_bg_color(root_, lv_color_hex(theme::kMenuBackground), 0);
     const bool power_off = power_management_model_.idle_power_action == device::IdlePowerAction::kPowerOff;
-    Header(layout_, root_, UiText(host_strings::Id::kUiPowerManagement),
-           power_off ? UiText(host_strings::Id::kUiIdleAndAutomaticPowerOff)
-                     : UiText(host_strings::Id::kUiIdleAndAutomaticSleep),
-           PowerManagementBackEvent, this);
+    const bool idle_power_available = power_management_model_.idle_power_action != device::IdlePowerAction::kDisabled;
+    Header(
+        layout_, root_,
+        UiText(idle_power_available ? host_strings::Id::kUiPowerManagement : host_strings::Id::kUiScreenSleepTimeout),
+        idle_power_available ? UiText(power_off ? host_strings::Id::kUiIdleAndAutomaticPowerOff
+                                                : host_strings::Id::kUiIdleAndAutomaticSleep)
+                             : UiText(host_strings::Id::kUiScreenSleepTimeoutHint),
+        PowerManagementBackEvent, this);
     lv_obj_t* content = Scroll(layout_, root_, ScrollEvent, this);
 
     lv_obj_t* automatic = Panel(layout_, content);
+    if (!idle_power_available) lv_obj_set_hidden(automatic, true);
     lv_obj_set_flex_flow(automatic, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(automatic, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(automatic, 12, 0);
@@ -63,6 +69,7 @@ void SystemDetailUi::RenderPowerManagementLocked() {
     lv_obj_add_event_cb(power_switch_, PowerManagementSwitchEvent, LV_EVENT_VALUE_CHANGED, this);
 
     lv_obj_t* timeout = Panel(layout_, content);
+    if (!idle_power_available) lv_obj_set_hidden(timeout, true);
     (void)Label(timeout, UiText(host_strings::Id::kUiIdleTimeout), platform::lvgl::SystemFontRole::kLarge,
                 theme::kPrimaryText);
     (void)Label(timeout, UiText(host_strings::Id::kUiChooseHowLongToWait), platform::lvgl::SystemFontRole::kSmall,
@@ -75,6 +82,22 @@ void SystemDetailUi::RenderPowerManagementLocked() {
     lv_obj_set_style_text_font(
         power_timeout_, platform::lvgl::BuiltinLatinFont(platform::lvgl::SystemFontRole::kMedium), LV_PART_INDICATOR);
     lv_obj_add_event_cb(power_timeout_, PowerManagementTimeoutEvent, LV_EVENT_VALUE_CHANGED, this);
+    if (power_management_model_.display_sleep_available) {
+        lv_obj_t* display_timeout = Panel(layout_, content);
+        (void)Label(display_timeout, UiText(host_strings::Id::kUiScreenSleepTimeout),
+                    platform::lvgl::SystemFontRole::kLarge, theme::kPrimaryText);
+        (void)Label(display_timeout, UiText(host_strings::Id::kUiScreenSleepTimeoutHint),
+                    platform::lvgl::SystemFontRole::kSmall, theme::kSecondaryText);
+        display_sleep_timeout_ = lv_dropdown_create(display_timeout);
+        lv_dropdown_set_options(display_sleep_timeout_, UiText(host_strings::Id::kUi1Minute2Minutes5Minutes10Minutes));
+        lv_obj_set_size(display_sleep_timeout_, LV_PCT(100), layout_.control_height);
+        lv_obj_set_style_text_font(display_sleep_timeout_,
+                                   platform::lvgl::BuiltinLatinFont(platform::lvgl::SystemFontRole::kMedium), 0);
+        lv_obj_set_style_text_font(display_sleep_timeout_,
+                                   platform::lvgl::BuiltinLatinFont(platform::lvgl::SystemFontRole::kMedium),
+                                   LV_PART_INDICATOR);
+        lv_obj_add_event_cb(display_sleep_timeout_, DisplaySleepTimeoutEvent, LV_EVENT_VALUE_CHANGED, this);
+    }
     lv_obj_t* note = Label(
         content,
         power_off
@@ -84,6 +107,7 @@ void SystemDetailUi::RenderPowerManagementLocked() {
         layout_.detail_font, theme::kMutedText);
     lv_obj_set_width(note, LV_PCT(100));
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    if (!idle_power_available) lv_obj_set_hidden(note, true);
     UpdatePowerManagementLocked(power_management_model_);
     lv_obj_move_foreground(root_);
     platform::lvgl::RequestDisplayRefresh(lv_obj_get_display(root_));
@@ -120,6 +144,14 @@ void SystemDetailUi::UpdatePowerManagementLocked(const host_ui::PowerManagementM
         }
     }
     lv_dropdown_set_selected(power_timeout_, selected);
+    if (display_sleep_timeout_ != nullptr) {
+        for (uint32_t index = 0U; index < kDisplaySleepTimeoutMinutes.size(); ++index) {
+            if (kDisplaySleepTimeoutMinutes[index] == model.display_sleep_timeout_minutes) {
+                lv_dropdown_set_selected(display_sleep_timeout_, index);
+                break;
+            }
+        }
+    }
     updating_ = false;
     platform::lvgl::RequestDisplayRefresh(lv_obj_get_display(root_));
 }
@@ -165,6 +197,17 @@ void SystemDetailUi::PowerManagementTimeoutEvent(lv_event_t* event) {
         ui->action_sink_(ui->action_context_,
                          host_ui::SystemUiAction{.type = host_ui::SystemUiActionType::kSetAutoSleepTimeout,
                                                  .value = kAutoSleepTimeoutMinutes[selected]});
+    }
+}
+
+void SystemDetailUi::DisplaySleepTimeoutEvent(lv_event_t* event) {
+    auto* ui = static_cast<SystemDetailUi*>(lv_event_get_user_data(event));
+    if (ui == nullptr || ui->updating_ || ui->action_sink_ == nullptr) return;
+    const uint32_t selected = lv_dropdown_get_selected(lv_event_get_target_obj(event));
+    if (selected < kDisplaySleepTimeoutMinutes.size()) {
+        ui->action_sink_(ui->action_context_,
+                         host_ui::SystemUiAction{.type = host_ui::SystemUiActionType::kSetDisplaySleepTimeout,
+                                                 .value = kDisplaySleepTimeoutMinutes[selected]});
     }
 }
 

@@ -24,6 +24,9 @@ constexpr char kNvsStateKey[] = "state";
 constexpr uint32_t kStoredStateMagic = 0x57494649U;
 constexpr uint16_t kStoredStateVersion = 1U;
 constexpr uint8_t kReconnectAttemptLimit = 2U;
+constexpr uint8_t kConnectionTimeoutRecoveryLimit = 2U;
+constexpr int64_t kConnectionTimeoutUs = 10LL * 1000LL * 1000LL;
+constexpr int64_t kConnectionTimerRetryUs = 250LL * 1000LL;
 constexpr int64_t kUserScanDiscoveryHoldoffUs = 20LL * 1000LL * 1000LL;
 constexpr std::array<int64_t, 4U> kDiscoveryBackoffUs = {
     60LL * 1000LL * 1000LL,
@@ -149,6 +152,18 @@ device::WifiConnectionState ConnectionStateForDisconnectReason(uint8_t reason) {
     }
 }
 
+bool DisconnectReasonNeedsFullScan(uint8_t reason) {
+    switch (reason) {
+        case WIFI_REASON_NO_AP_FOUND:
+        case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+        case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+        case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
+            return true;
+        default:
+            return false;
+    }
+}
+
 const char* AuthModeName(uint8_t auth_mode) {
     switch (static_cast<wifi_auth_mode_t>(auth_mode)) {
         case WIFI_AUTH_OPEN:
@@ -186,6 +201,12 @@ void WifiManager::ColdStateDeleter::operator()(ColdState* value) const {
 }
 
 WifiManager::~WifiManager() {
+    if (connection_timer_ != nullptr) {
+        (void)esp_timer_stop(connection_timer_);
+    }
+    if (discovery_timer_ != nullptr) {
+        (void)esp_timer_stop(discovery_timer_);
+    }
     if (radio_startup_task_started_ && radio_startup_done_ != nullptr) {
         (void)xSemaphoreTake(radio_startup_done_, portMAX_DELAY);
     }
@@ -235,6 +256,16 @@ std::expected<void, device::WifiError> WifiManager::Initialize() {
         .skip_unhandled_events = true,
     };
     if (esp_timer_create(&discovery_timer_args, &discovery_timer_) != ESP_OK) {
+        return std::unexpected(device::WifiError::kOperationFailed);
+    }
+    const esp_timer_create_args_t connection_timer_args{
+        .callback = ConnectionTimerHandler,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "wifi_connect",
+        .skip_unhandled_events = true,
+    };
+    if (esp_timer_create(&connection_timer_args, &connection_timer_) != ESP_OK) {
         return std::unexpected(device::WifiError::kOperationFailed);
     }
     (void)LoadSettings();
@@ -437,6 +468,9 @@ std::expected<void, device::WifiError> WifiManager::SetEnabled(bool enabled) {
         user_scan_after_discovery_ = false;
         discovery_connection_pending_ = false;
         connection_full_channel_scan_ = false;
+        connection_timeout_streak_ = 0U;
+        connection_deadline_us_ = 0;
+        suppress_next_sta_start_discovery_ = false;
         scan_purpose_ = ScanPurpose::kNone;
         discovery_channel_count_ = 0U;
         discovery_channel_index_ = 0U;
@@ -451,6 +485,9 @@ std::expected<void, device::WifiError> WifiManager::SetEnabled(bool enabled) {
 
     if (discovery_timer_ != nullptr) {
         (void)esp_timer_stop(discovery_timer_);
+    }
+    if (connection_timer_ != nullptr) {
+        (void)esp_timer_stop(connection_timer_);
     }
 
     esp_err_t status = ESP_OK;
@@ -637,6 +674,118 @@ void WifiManager::DiscoveryTimerHandler(void* context) {
 
 void WifiManager::HandleDiscoveryTimer() { StartDiscovery(); }
 
+void WifiManager::ConnectionTimerHandler(void* context) {
+    auto* manager = static_cast<WifiManager*>(context);
+    if (manager == nullptr || manager->connection_timeout_job_scheduled_.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    if (manager->background_executor_ != nullptr &&
+        manager->background_executor_->Submit(ConnectionTimeoutEntry, manager)) {
+        return;
+    }
+    manager->connection_timeout_job_scheduled_.store(false, std::memory_order_release);
+    if (manager->connection_timer_ != nullptr) {
+        (void)esp_timer_start_once(manager->connection_timer_, kConnectionTimerRetryUs);
+    }
+}
+
+void WifiManager::ConnectionTimeoutEntry(void* context) {
+    auto* manager = static_cast<WifiManager*>(context);
+    if (manager == nullptr) return;
+    manager->connection_timeout_job_scheduled_.store(false, std::memory_order_release);
+    manager->HandleConnectionTimeout();
+}
+
+void WifiManager::ArmConnectionTimeout() {
+    {
+        ScopedLock lock(mutex_);
+        connection_deadline_us_ = esp_timer_get_time() + kConnectionTimeoutUs;
+    }
+    if (connection_timer_ == nullptr) return;
+    (void)esp_timer_stop(connection_timer_);
+    if (esp_timer_start_once(connection_timer_, kConnectionTimeoutUs) != ESP_OK) {
+        ESP_LOGW(kTag, "could not arm Wi-Fi connection timeout");
+    }
+}
+
+void WifiManager::CancelConnectionTimeout() {
+    {
+        ScopedLock lock(mutex_);
+        connection_deadline_us_ = 0;
+    }
+    if (connection_timer_ != nullptr) {
+        (void)esp_timer_stop(connection_timer_);
+    }
+}
+
+void WifiManager::HandleConnectionTimeout() {
+    SavedProfile retry_profile{};
+    bool have_profile = false;
+    bool restart_station = false;
+    bool give_up = false;
+    {
+        ScopedLock lock(mutex_);
+        const int64_t now_us = esp_timer_get_time();
+        if (!initialized_ || !enabled_ || Cold().snapshot.connected ||
+            Cold().snapshot.connection_state != device::WifiConnectionState::kConnecting ||
+            connection_deadline_us_ == 0 || now_us < connection_deadline_us_) {
+            return;
+        }
+        connection_deadline_us_ = 0;
+        ++connection_timeout_streak_;
+        restart_station = connection_timeout_streak_ == kConnectionTimeoutRecoveryLimit;
+        give_up = connection_timeout_streak_ > kConnectionTimeoutRecoveryLimit;
+        if (pending_profile_valid_) {
+            retry_profile = Cold().pending_profile;
+            have_profile = true;
+        } else if (active_profile_index_ >= 0 && active_profile_index_ < static_cast<int32_t>(profile_count_)) {
+            retry_profile = Cold().profiles[static_cast<uint32_t>(active_profile_index_)];
+            have_profile = true;
+        }
+        associated_ = false;
+        Cold().snapshot.connected = false;
+        Cold().snapshot.connection_state = device::WifiConnectionState::kFailed;
+        if (!give_up) {
+            ignore_next_disconnect_ = true;
+        } else if (pending_profile_valid_) {
+            Cold().pending_profile = {};
+            pending_profile_valid_ = false;
+        }
+        RebuildSnapshotLocked();
+    }
+
+    ESP_LOGW(kTag, "Wi-Fi connection timed out: recovery=%u restart=%s",
+             static_cast<unsigned>(connection_timeout_streak_), restart_station ? "yes" : "no");
+    (void)esp_wifi_scan_stop();
+    const esp_err_t disconnect_status = esp_wifi_disconnect();
+    if (disconnect_status == ESP_ERR_WIFI_NOT_CONNECT) {
+        ScopedLock lock(mutex_);
+        ignore_next_disconnect_ = false;
+    }
+    if (give_up || !have_profile) {
+        ScheduleDiscovery(true);
+        return;
+    }
+    if (restart_station) {
+        {
+            ScopedLock lock(mutex_);
+            suppress_next_sta_start_discovery_ = true;
+        }
+        esp_err_t status = esp_wifi_stop();
+        if (status == ESP_OK) status = esp_wifi_start();
+        if (status == ESP_OK) status = radio_.OnStationStarted();
+        if (status != ESP_OK) {
+            ESP_LOGW(kTag, "Wi-Fi station recovery failed: %s", esp_err_to_name(status));
+            ScheduleDiscovery(true);
+            return;
+        }
+    }
+    if (const auto result = ConfigureAndConnect(retry_profile, true); !result) {
+        ESP_LOGW(kTag, "full-channel Wi-Fi timeout recovery failed: error=%u", static_cast<unsigned>(result.error()));
+        ScheduleDiscovery(true);
+    }
+}
+
 std::expected<void, device::WifiError> WifiManager::ConnectSaved(std::string_view ssid) {
     SavedProfile profile{};
     int32_t index = -1;
@@ -654,6 +803,7 @@ std::expected<void, device::WifiError> WifiManager::ConnectSaved(std::string_vie
         pending_profile_valid_ = false;
         user_requested_disconnect_ = false;
         reconnect_attempts_ = 0U;
+        connection_timeout_streak_ = 0U;
         discovery_connection_pending_ = false;
     }
     ResetDiscoveryBackoff();
@@ -698,13 +848,19 @@ std::expected<void, device::WifiError> WifiManager::Connect(std::string_view ssi
         active_profile_index_ = index;
         user_requested_disconnect_ = false;
         reconnect_attempts_ = 0U;
+        connection_timeout_streak_ = 0U;
         discovery_connection_pending_ = false;
     }
     ResetDiscoveryBackoff();
-    return ConfigureAndConnect(profile, !have_target);
+    // User-initiated connections favor reliability. ESP-Hosted can report a
+    // stale channel target as NO_AP_FOUND even when the preceding scan saw the
+    // AP, so let the station perform its own all-channel selection.
+    (void)have_target;
+    return ConfigureAndConnect(profile, true);
 }
 
 std::expected<void, device::WifiError> WifiManager::Disconnect() {
+    CancelConnectionTimeout();
     {
         ScopedLock lock(mutex_);
         if (!initialized_ || !enabled_) {
@@ -768,9 +924,21 @@ std::expected<void, device::WifiError> WifiManager::Forget(std::string_view ssid
         RebuildSnapshotLocked();
     }
     if (disconnect) {
+        CancelConnectionTimeout();
         (void)esp_wifi_disconnect();
     }
     return SaveSettings() ? std::expected<void, device::WifiError>{} : std::unexpected(device::WifiError::kStorage);
+}
+
+std::expected<void, device::WifiError> WifiManager::SetRealtimeMode(bool enabled) {
+    {
+        ScopedLock lock(mutex_);
+        if (!initialized_ || !enabled_) return std::unexpected(device::WifiError::kUnavailable);
+    }
+    if (radio_.SetRealtimeMode(enabled) != ESP_OK) {
+        return std::unexpected(device::WifiError::kOperationFailed);
+    }
+    return {};
 }
 
 void WifiManager::WifiEventHandler(void* context, esp_event_base_t event_base, int32_t event_id, void* event_data) {
@@ -799,7 +967,11 @@ void WifiManager::HandleWifiEvent(int32_t event_id, void* event_data) {
         bool should_discover = false;
         {
             ScopedLock lock(mutex_);
-            should_discover = enabled_ && profile_count_ > 0U;
+            if (suppress_next_sta_start_discovery_) {
+                suppress_next_sta_start_discovery_ = false;
+            } else {
+                should_discover = enabled_ && profile_count_ > 0U;
+            }
             user_requested_disconnect_ = false;
             reconnect_attempts_ = 0U;
             discovery_backoff_index_ = 0U;
@@ -864,6 +1036,7 @@ void WifiManager::HandleWifiEvent(int32_t event_id, void* event_data) {
     bool user_connection_failed = false;
     bool retry_new_connection = false;
     bool retry_full_channel_scan = false;
+    bool cancel_connection_timer = false;
     SavedProfile retry_profile{};
     uint8_t retry_attempt = 0U;
     {
@@ -871,6 +1044,8 @@ void WifiManager::HandleWifiEvent(int32_t event_id, void* event_data) {
         associated_ = false;
         Cold().snapshot.connected = false;
         if (scan_after_disconnect_) {
+            connection_deadline_us_ = 0;
+            cancel_connection_timer = true;
             scan_after_disconnect_ = false;
             Cold().snapshot.connection_state = device::WifiConnectionState::kDisconnected;
             RebuildSnapshotLocked();
@@ -884,6 +1059,8 @@ void WifiManager::HandleWifiEvent(int32_t event_id, void* event_data) {
             RebuildSnapshotLocked();
             return;
         } else {
+            connection_deadline_us_ = 0;
+            cancel_connection_timer = true;
             const bool new_connection_pending = pending_profile_valid_;
             should_retry = enabled_ && reconnect_attempts_ < kReconnectAttemptLimit &&
                            (new_connection_pending || active_profile_index_ >= 0);
@@ -893,8 +1070,9 @@ void WifiManager::HandleWifiEvent(int32_t event_id, void* event_data) {
                 retry_new_connection = new_connection_pending;
                 retry_profile = new_connection_pending ? Cold().pending_profile
                                                        : Cold().profiles[static_cast<uint32_t>(active_profile_index_)];
-                retry_full_channel_scan =
-                    connection_full_channel_scan_ || retry_profile.channel == 0U || !retry_profile.bssid_valid;
+                retry_full_channel_scan = connection_full_channel_scan_ || retry_profile.channel == 0U ||
+                                          !retry_profile.bssid_valid ||
+                                          DisconnectReasonNeedsFullScan(disconnect_reason);
                 Cold().snapshot.connection_state = device::WifiConnectionState::kConnecting;
             } else if (new_connection_pending) {
                 user_connection_failed = true;
@@ -916,6 +1094,9 @@ void WifiManager::HandleWifiEvent(int32_t event_id, void* event_data) {
             }
             RebuildSnapshotLocked();
         }
+    }
+    if (cancel_connection_timer && connection_timer_ != nullptr) {
+        (void)esp_timer_stop(connection_timer_);
     }
     if (start_user_scan) {
         if (const auto result = StartScan(ScanPurpose::kUser); !result) {
@@ -944,16 +1125,23 @@ void WifiManager::HandleWifiEvent(int32_t event_id, void* event_data) {
 }
 
 void WifiManager::HandleGotIp() {
+    bool connected = false;
     {
         ScopedLock lock(mutex_);
         if (!associated_) {
             return;
         }
+        connection_deadline_us_ = 0;
         Cold().snapshot.connected = true;
         Cold().snapshot.connection_state = device::WifiConnectionState::kConnected;
         reconnect_attempts_ = 0U;
+        connection_timeout_streak_ = 0U;
         connection_full_channel_scan_ = false;
         RebuildSnapshotLocked();
+        connected = true;
+    }
+    if (connected && connection_timer_ != nullptr) {
+        (void)esp_timer_stop(connection_timer_);
     }
     ResetDiscoveryBackoff();
 }
@@ -1089,7 +1277,10 @@ void WifiManager::HandleScanDone() {
             ScheduleDiscovery(true);
         }
     } else if (connect_discovery_candidate) {
-        const auto result = ConfigureAndConnect(discovery_profile, false);
+        // The discovery scan proves that the SSID is nearby, but its channel
+        // and BSSID can already be stale by the time ESP-Hosted starts the
+        // association. Use an all-channel station scan for boot reliability.
+        const auto result = ConfigureAndConnect(discovery_profile, true);
         if (!result) {
             {
                 ScopedLock lock(mutex_);
@@ -1160,6 +1351,7 @@ std::expected<void, device::WifiError> WifiManager::ConfigureAndConnect(const Sa
         RebuildSnapshotLocked();
         return std::unexpected(WifiErrorFor(status));
     }
+    ArmConnectionTimeout();
     return {};
 }
 

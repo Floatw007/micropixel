@@ -57,6 +57,8 @@ class SystemShell final {
     [[nodiscard]] std::expected<void, SystemUiError> ShowPowerManagement(const PowerManagementModel& model);
     void UpdatePowerManagement(const PowerManagementModel& model);
     void LeavePowerManagement();
+    [[nodiscard]] bool SupportsDisplaySleepTimeout() const;
+    void SetDisplaySleepTimeout(uint8_t minutes);
     [[nodiscard]] std::expected<void, SystemUiError> ShowAppearance(const AppearanceModel& model);
     void UpdateAppearance(const AppearanceModel& model);
     void LeaveAppearance();
@@ -87,6 +89,7 @@ class SystemShell final {
     void NotifyBatteryStateChanged();
     void NotifyTimeStateChanged();
     void NotifyRemoteCommandReady();
+    [[nodiscard]] bool NotifyOpenSystemMenu();
     void NotifyUserActivity();
     [[nodiscard]] uint32_t UserIdleMs() const;
     void ConfigureAutoSleep(uint8_t timeout_minutes, ExternalPowerStateQuery power_query, void* power_context,
@@ -106,6 +109,7 @@ class SystemShell final {
     void QueuePendingTimeStateChange();
     void QueuePendingRemoteCommand();
     void QueuePendingUserActivity();
+    void QueuePendingOpenSystemMenu();
     void RefreshExternalPowerState();
     [[nodiscard]] TickType_t AutoSleepAwareTimeout(TickType_t requested_timeout) const;
     [[nodiscard]] bool RequestAutoSleepIfDue();
@@ -137,6 +141,8 @@ class SystemShell final {
     std::atomic_bool action_sheet_pending_{};
     std::atomic_bool user_activity_pending_{};
     std::atomic_bool user_activity_queued_{};
+    std::atomic_bool open_system_menu_pending_{};
+    std::atomic_bool open_system_menu_queued_{};
     std::atomic<TickType_t> last_user_activity_ticks_{};
     device::IdlePowerAction idle_power_action_{device::IdlePowerAction::kSleep};
     std::atomic<uint8_t> auto_sleep_timeout_minutes_{};

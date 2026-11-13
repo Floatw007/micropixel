@@ -193,4 +193,16 @@ esp_err_t EspHostedRadio::OnStationStarted() {
     return ESP_OK;
 }
 
+esp_err_t EspHostedRadio::SetRealtimeMode(bool enabled) {
+    if (!minimum_modem_sleep_) return ESP_OK;
+    const wifi_ps_type_t mode = enabled ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM;
+    const esp_err_t status = esp_wifi_set_ps(mode);
+    if (status == ESP_OK) {
+        ESP_LOGI(kTag, "C6 Wi-Fi realtime mode %s", enabled ? "enabled" : "disabled");
+    } else {
+        ESP_LOGW(kTag, "could not change C6 Wi-Fi realtime mode: %s", esp_err_to_name(status));
+    }
+    return status;
+}
+
 }  // namespace micropixel::platform::wifi

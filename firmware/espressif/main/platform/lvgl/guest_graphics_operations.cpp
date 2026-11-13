@@ -177,7 +177,7 @@ adapters::GraphicsOperations MakeGuestGraphicsOperations(GuestGraphicsOperations
             [](void* opaque, const device::DirectSurfacePresentation& presentation) {
                 return Binding(opaque).engine->PresentDirectSurface(presentation);
             },
-        .suspend_direct_surface = [](void* opaque) { Binding(opaque).engine->SuspendDirectSurface(); },
+        .suspend_direct_surface = [](void* opaque) { return Binding(opaque).engine->SuspendDirectSurface(); },
         .resume_direct_surface = [](void* opaque) { Binding(opaque).engine->ResumeDirectSurface(); },
         .destroy_direct_surface = [](void* opaque) { return Binding(opaque).engine->DestroyDirectSurface(); },
     };

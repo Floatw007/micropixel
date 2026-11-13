@@ -184,6 +184,14 @@ class UiFontSubsetTest(unittest.TestCase):
         # The catalogs reach past GB2312 level 1 for a handful of characters.
         self.assertEqual(len(required - basic), 12)
 
+    def test_bear_fixed_chinese_ui_is_included_as_an_extra_source(self):
+        source = Path("guest/apps/bear/main.cpp")
+        required = build_ui_font_subset.required_charset(self.catalogs, "zh-CN", [source])
+        bear = build_ui_font_subset.extra_source_charset([source])
+        self.assertIn(ord("设"), bear)
+        self.assertIn(ord("诊"), required)
+        self.assertIn(ord("断"), required)
+
     def test_component_documents_parse_as_a_ttf_font_component(self):
         identifier, project, assets = build_ui_font_subset.component_documents("zh-CN", "1.0.0", "gb2312-level1")
         self.assertEqual(identifier, "micropixel.fonts.ui.zh-cn")

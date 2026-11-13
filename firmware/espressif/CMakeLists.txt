@@ -9,6 +9,27 @@ idf_build_set_property(DEPENDENCIES_LOCK dependencies.lock.${IDF_TARGET})
 set(PROJECT_VER "0.9.6")
 project(micropixel)
 
+# ESP-Hosted 2.12.x queues synchronous responses globally even though it wakes
+# callers by UID. Route each payload through its matching UID table entry so
+# concurrent Wi-Fi control RPCs cannot hand one caller another RPC's union.
+if(IDF_TARGET STREQUAL "esp32p4")
+    idf_component_get_property(esp_hosted_dir espressif__esp_hosted COMPONENT_DIR)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_LIST_DIR}/patches/patch_esp_hosted_sync_rpc.py"
+            "${esp_hosted_dir}"
+        RESULT_VARIABLE esp_hosted_rpc_patch_result
+        OUTPUT_VARIABLE esp_hosted_rpc_patch_output
+        ERROR_VARIABLE esp_hosted_rpc_patch_error)
+    if(NOT esp_hosted_rpc_patch_result EQUAL 0)
+        message(FATAL_ERROR
+            "Could not apply the ESP-Hosted synchronous RPC fix:\n"
+            "${esp_hosted_rpc_patch_output}${esp_hosted_rpc_patch_error}")
+    endif()
+    message(STATUS "${esp_hosted_rpc_patch_output}")
+endif()
+
 # esp-hosted 2.x still starts its SDIO transport from a C constructor. With
 # ESP-IDF 6.1 that constructor runs before the P4 sleep-retention modules are
 # registered and crashes in sleep_retention.c. Remove only that auto-init

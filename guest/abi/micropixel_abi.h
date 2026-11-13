@@ -32,6 +32,9 @@
 #define MICROPIXEL_AUDIO_INTERFACE_MINOR 1U
 #define MICROPIXEL_NETWORK_INTERFACE_MAJOR 1U
 #define MICROPIXEL_NETWORK_INTERFACE_MINOR 0U
+#define MICROPIXEL_VOICE_INTERFACE_MAJOR 1U
+#define MICROPIXEL_VOICE_INTERFACE_MINOR 1U
+#define MICROPIXEL_VOICE_MAX_READ_BYTES 512U
 #define MICROPIXEL_NETWORK_MAX_PATH_BYTES 256U
 #define MICROPIXEL_NETWORK_MAX_BODY_BYTES 4096U
 #define MICROPIXEL_NETWORK_MAX_IDEMPOTENCY_KEY_BYTES 64U
@@ -46,7 +49,7 @@
 #define MICROPIXEL_STORAGE_MAX_KEY_BYTES 15U
 #define MICROPIXEL_STORAGE_MAX_VALUE_BYTES 4096U
 #define MICROPIXEL_SYSTEM_INTERFACE_MAJOR 1U
-#define MICROPIXEL_SYSTEM_INTERFACE_MINOR 0U
+#define MICROPIXEL_SYSTEM_INTERFACE_MINOR 1U
 #define MICROPIXEL_LOCALE_TAG_MAX_BYTES 31U
 #define MICROPIXEL_LAUNCH_ARGUMENT_MAX_COUNT 16U
 #define MICROPIXEL_LAUNCH_ARGUMENT_MAX_BYTES 512U
@@ -114,6 +117,7 @@ typedef enum micropixel_service_id {
     MICROPIXEL_SERVICE_GPIO = 21,
     MICROPIXEL_SERVICE_HAPTICS = 22,
     MICROPIXEL_SERVICE_POWER = 23,
+    MICROPIXEL_SERVICE_VOICE = 24,
 } micropixel_service_id_t;
 
 typedef enum micropixel_service_flag {
@@ -231,6 +235,7 @@ typedef enum micropixel_random_method {
 typedef enum micropixel_system_method {
     MICROPIXEL_SYSTEM_METHOD_GET_LOCALE = 1,
     MICROPIXEL_SYSTEM_METHOD_GET_LAUNCH_ARGUMENTS = 2,
+    MICROPIXEL_SYSTEM_METHOD_OPEN_SETTINGS = 3,
 } micropixel_system_method_t;
 
 typedef struct micropixel_system_locale_response {
@@ -1241,6 +1246,176 @@ typedef struct micropixel_network_complete_event_payload {
     uint8_t reserved0;
 } micropixel_network_complete_event_payload_t;
 
+typedef enum micropixel_voice_method {
+    MICROPIXEL_VOICE_METHOD_GET_INFO = 1,
+    MICROPIXEL_VOICE_METHOD_START_SESSION = 2,
+    MICROPIXEL_VOICE_METHOD_CANCEL_SESSION = 3,
+    MICROPIXEL_VOICE_METHOD_GET_STATE = 4,
+    MICROPIXEL_VOICE_METHOD_READ_TEXT = 5,
+    MICROPIXEL_VOICE_METHOD_GET_PREFERENCES = 6,
+    MICROPIXEL_VOICE_METHOD_SET_PREFERENCES = 7,
+    MICROPIXEL_VOICE_METHOD_GET_DIAGNOSTICS = 8,
+    MICROPIXEL_VOICE_METHOD_RUN_DIAGNOSTIC = 9,
+    MICROPIXEL_VOICE_METHOD_CLEAR_CONTEXT = 10,
+} micropixel_voice_method_t;
+
+typedef enum micropixel_voice_preference_mask {
+    MICROPIXEL_VOICE_PREFERENCE_RESPONSE_GAIN = 1U << 0U,
+    MICROPIXEL_VOICE_PREFERENCE_LOCAL_COMMANDS = 1U << 1U,
+} micropixel_voice_preference_mask_t;
+
+typedef enum micropixel_voice_diagnostic_kind {
+    MICROPIXEL_VOICE_DIAGNOSTIC_MICROPHONE = 1,
+    MICROPIXEL_VOICE_DIAGNOSTIC_SPEAKER = 2,
+} micropixel_voice_diagnostic_kind_t;
+
+typedef enum micropixel_voice_diagnostic_flag {
+    MICROPIXEL_VOICE_DIAGNOSTIC_CONFIGURED = 1U << 0U,
+    MICROPIXEL_VOICE_DIAGNOSTIC_ROUTE_ONLINE = 1U << 1U,
+    MICROPIXEL_VOICE_DIAGNOSTIC_MICROPHONE_READY = 1U << 2U,
+    MICROPIXEL_VOICE_DIAGNOSTIC_SPEAKER_READY = 1U << 3U,
+    MICROPIXEL_VOICE_DIAGNOSTIC_SESSION_ACTIVE = 1U << 4U,
+} micropixel_voice_diagnostic_flag_t;
+
+typedef enum micropixel_voice_state {
+    MICROPIXEL_VOICE_STATE_IDLE = 0,
+    MICROPIXEL_VOICE_STATE_WOKEN = 1,
+    MICROPIXEL_VOICE_STATE_LISTENING = 2,
+    MICROPIXEL_VOICE_STATE_THINKING = 3,
+    MICROPIXEL_VOICE_STATE_SPEAKING = 4,
+    MICROPIXEL_VOICE_STATE_OFFLINE = 5,
+    MICROPIXEL_VOICE_STATE_ERROR = 6,
+} micropixel_voice_state_t;
+
+typedef enum micropixel_voice_text_kind {
+    MICROPIXEL_VOICE_TEXT_TRANSCRIPT = 1,
+    MICROPIXEL_VOICE_TEXT_RESPONSE = 2,
+} micropixel_voice_text_kind_t;
+
+typedef enum micropixel_voice_capability {
+    MICROPIXEL_VOICE_CAP_WAKE_WORD = 1ULL << 0U,
+    MICROPIXEL_VOICE_CAP_LOCAL_COMMANDS = 1ULL << 1U,
+    MICROPIXEL_VOICE_CAP_STREAMING_TEXT = 1ULL << 2U,
+    MICROPIXEL_VOICE_CAP_STREAMING_AUDIO = 1ULL << 3U,
+    MICROPIXEL_VOICE_CAP_TOUCH_CANCEL = 1ULL << 4U,
+} micropixel_voice_capability_t;
+
+typedef enum micropixel_voice_event_id {
+    MICROPIXEL_VOICE_EVENT_STATE_CHANGED = 1,
+    MICROPIXEL_VOICE_EVENT_INPUT_LEVEL = 2,
+    MICROPIXEL_VOICE_EVENT_TRANSCRIPT_UPDATED = 3,
+    MICROPIXEL_VOICE_EVENT_RESPONSE_UPDATED = 4,
+    MICROPIXEL_VOICE_EVENT_SESSION_ENDED = 5,
+    MICROPIXEL_VOICE_EVENT_ERROR = 6,
+    MICROPIXEL_VOICE_EVENT_LOCAL_COMMAND = 7,
+} micropixel_voice_event_id_t;
+
+typedef enum micropixel_voice_local_command {
+    MICROPIXEL_VOICE_LOCAL_COMMAND_SLEEP = 1,
+    MICROPIXEL_VOICE_LOCAL_COMMAND_WAKE = 2,
+    MICROPIXEL_VOICE_LOCAL_COMMAND_VOLUME_UP = 3,
+    MICROPIXEL_VOICE_LOCAL_COMMAND_VOLUME_DOWN = 4,
+} micropixel_voice_local_command_t;
+
+typedef enum micropixel_voice_text_flag {
+    MICROPIXEL_VOICE_TEXT_FINAL = 1U << 0U,
+    MICROPIXEL_VOICE_TEXT_TRUNCATED = 1U << 1U,
+} micropixel_voice_text_flag_t;
+
+typedef struct micropixel_voice_info {
+    uint16_t size;
+    uint8_t configured;
+    uint8_t route_online;
+    uint16_t sample_rate;
+    uint8_t channels;
+    uint8_t frame_duration_ms;
+    uint16_t max_transcript_bytes;
+    uint16_t max_response_bytes;
+    uint32_t profile_revision;
+    uint64_t capabilities;
+} micropixel_voice_info_t;
+
+typedef struct micropixel_voice_state_response {
+    uint16_t size;
+    uint8_t state;
+    uint8_t reserved0;
+    uint32_t session_id;
+    uint16_t input_level_per_mille;
+    uint16_t reserved1;
+    uint32_t transcript_revision;
+    uint32_t response_revision;
+} micropixel_voice_state_response_t;
+
+typedef struct micropixel_voice_read_text_request {
+    uint16_t size;
+    uint8_t kind;
+    uint8_t reserved0;
+    uint32_t revision;
+    uint32_t offset;
+    uint32_t capacity;
+} micropixel_voice_read_text_request_t;
+
+/* READ_TEXT is followed by chunk_length UTF-8 bytes. */
+typedef struct micropixel_voice_read_text_response {
+    uint16_t size;
+    uint8_t kind;
+    uint8_t flags;
+    uint32_t revision;
+    uint32_t total_length;
+    uint16_t chunk_length;
+    uint16_t reserved0;
+} micropixel_voice_read_text_response_t;
+
+typedef struct micropixel_voice_preferences {
+    uint16_t size;
+    uint16_t response_gain_per_mille;
+    uint8_t local_commands_enabled;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t revision;
+} micropixel_voice_preferences_t;
+
+typedef struct micropixel_voice_set_preferences_request {
+    uint16_t size;
+    uint16_t mask;
+    uint16_t response_gain_per_mille;
+    uint8_t local_commands_enabled;
+    uint8_t reserved0;
+} micropixel_voice_set_preferences_request_t;
+
+typedef struct micropixel_voice_diagnostics {
+    uint16_t size;
+    uint16_t flags;
+    uint16_t input_level_per_mille;
+    uint16_t queue_depth;
+    uint16_t queue_high_water;
+    uint16_t reserved0;
+    uint32_t frames_sent;
+    uint32_t frames_dropped;
+    uint32_t first_transcript_ms;
+    uint32_t first_response_text_ms;
+    uint32_t first_audio_ms;
+    int32_t last_status;
+} micropixel_voice_diagnostics_t;
+
+typedef struct micropixel_voice_run_diagnostic_request {
+    uint16_t size;
+    uint8_t kind;
+    uint8_t reserved0;
+} micropixel_voice_run_diagnostic_request_t;
+
+/* Fixed 16-byte payload used by every Voice event. `value` is the new state,
+ * input level, local-command ID, or provider-neutral error detail according
+ * to event_id. For LOCAL_COMMAND, `revision` is the session generation. */
+typedef struct micropixel_voice_event_payload {
+    uint8_t kind;
+    uint8_t flags;
+    uint16_t reserved0;
+    uint32_t revision;
+    uint32_t total_length;
+    uint32_t value;
+} micropixel_voice_event_payload_t;
+
 typedef enum micropixel_audio_capability {
     MICROPIXEL_AUDIO_CAPABILITY_OGG_OPUS = 1U << 0U,
     /* PCM_STREAM_* methods and the PCM_STREAM_LOW_WATER event are available. */
@@ -1843,6 +2018,15 @@ typedef struct micropixel_event {
 #endif
 
 MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_event_t) == 48U, "micropixel_event_t ABI size changed");
+MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_voice_info_t) == 24U, "micropixel_voice_info_t ABI size changed");
+MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_voice_state_response_t) == 20U,
+                             "micropixel_voice_state_response_t ABI size changed");
+MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_voice_read_text_request_t) == 16U,
+                             "micropixel_voice_read_text_request_t ABI size changed");
+MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_voice_read_text_response_t) == 16U,
+                             "micropixel_voice_read_text_response_t ABI size changed");
+MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_voice_event_payload_t) == 16U,
+                             "micropixel_voice_event_payload_t ABI size changed");
 MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_system_launch_arguments_response_t) == 552U,
                              "micropixel_system_launch_arguments_response_t ABI size changed");
 MICROPIXEL_ABI_STATIC_ASSERT(sizeof(micropixel_devices_list_request_t) == 8U,

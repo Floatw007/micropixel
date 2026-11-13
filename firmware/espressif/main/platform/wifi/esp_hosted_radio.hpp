@@ -11,6 +11,7 @@ class EspHostedRadio final : public WifiRadio {
 
     [[nodiscard]] esp_err_t Initialize() override;
     [[nodiscard]] esp_err_t OnStationStarted() override;
+    [[nodiscard]] esp_err_t SetRealtimeMode(bool enabled) override;
     [[nodiscard]] const char* Name() const override { return "ESP-Hosted"; }
     [[nodiscard]] bool HasSlowStartup() const override { return true; }
 

@@ -32,7 +32,7 @@ constexpr uint32_t kCommitMarker = 0x434f4d54U;
 constexpr uint32_t kHeaderDataBlockSizeOffset = 36U;
 constexpr uint32_t kHeaderFormatVersionOffset = 8U;
 
-esp_partition_t test_partition{.address = kPartitionAddress, .size = kPartitionSize};
+esp_partition_t test_partition{.address = kPartitionAddress, .size = kPartitionSize, .flash_chip = nullptr};
 std::vector<uint8_t> test_flash(kPartitionSize, UINT8_MAX);
 std::array<uint32_t, MICROPIXEL_BUNDLEFS_BANK_COUNT> bank_erase_counts{};
 std::array<void*, 64U> mappings{};

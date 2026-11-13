@@ -78,9 +78,22 @@ def catalog_charset(catalogs, locale):
     return result
 
 
-def required_charset(catalogs, locale):
+def extra_source_charset(paths):
+    """Characters used by fixed-language Guest UI source files.
+
+    Reading the complete UTF-8 source is intentional: it is conservative and
+    keeps this helper independent of the Guest compiler's C++ parser while
+    still making missing glyphs a build-time error.
+    """
+    result = set()
+    for path in paths:
+        result.update(ord(ch) for ch in path.read_text(encoding="utf-8") if ord(ch) >= 32)
+    return result
+
+
+def required_charset(catalogs, locale, extra_sources=()):
     """Every codepoint the pack has to carry for this locale: catalogs plus ASCII."""
-    return catalog_charset(catalogs, locale) | set(range(32, 127))
+    return catalog_charset(catalogs, locale) | extra_source_charset(extra_sources) | set(range(32, 127))
 
 
 def instance_static(font, weight):
@@ -120,12 +133,12 @@ def component_documents(locale, version, repertoire):
     return identifier, project, assets
 
 
-def build(source, locale, repertoire, catalogs, output, version, weight):
+def build(source, locale, repertoire, catalogs, output, version, weight, extra_sources=()):
     from fontTools import subset
     from fontTools.ttLib import TTFont
 
     source_bytes = source.read_bytes()
-    required = required_charset(catalogs, locale)
+    required = required_charset(catalogs, locale, extra_sources)
     basic = repertoire_charset(repertoire)
 
     variable = TTFont(source, recalcTimestamp=False)
@@ -177,6 +190,7 @@ def build(source, locale, repertoire, catalogs, output, version, weight):
         "repertoire_codepoints": len(basic),
         "repertoire_missing_from_source": sorted(basic - available),
         "ui_codepoints": len(required),
+        "extra_sources": [path.name for path in extra_sources],
     }
     (output / f"manifest-{locale}.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
@@ -191,10 +205,26 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--version", default="1.0.0")
     parser.add_argument("--weight", type=int, default=400)
+    parser.add_argument(
+        "--extra-source",
+        action="append",
+        default=[],
+        type=Path,
+        help="UTF-8 fixed-language UI source whose displayed characters must be included (repeatable)",
+    )
     args = parser.parse_args()
     print(
         json.dumps(
-            build(args.source, args.locale, args.repertoire, args.catalogs, args.output, args.version, args.weight),
+            build(
+                args.source,
+                args.locale,
+                args.repertoire,
+                args.catalogs,
+                args.output,
+                args.version,
+                args.weight,
+                args.extra_source,
+            ),
             indent=2,
         )
     )

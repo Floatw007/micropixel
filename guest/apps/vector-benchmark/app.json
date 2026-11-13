@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "app_id": "micropixel.vector-benchmark",
+  "version": "0.1.0",
+  "threading": "none",
+  "title": "Vector Benchmark",
+  "sources": ["main.cpp"],
+  "requirements": {
+    "schema_version": 1,
+    "display": {
+      "layouts": ["landscape"],
+      "min_width": 800,
+      "min_height": 480
+    },
+    "required": [],
+    "optional": ["input.touch"],
+    "any_of": [],
+    "services": {}
+  }
+}

@@ -179,6 +179,26 @@ class MicroPixelCliTest(unittest.TestCase):
         self.assertEqual(app_id, "vendor.game")
         self.assertEqual(base64.b64decode(encoded), b"--level\0" + b"100\0" + "你好".encode() + b"\0")
 
+    def test_voice_status_is_redacted_and_rejects_legacy_url_response(self) -> None:
+        class Client:
+            port = "/dev/test"
+
+            def request(self, operation: str) -> str:
+                self.operation = operation
+                return "VOICE_STATUS 1 0 7 abcdef 1234"
+
+        client = Client()
+        status = CLI.UsbControlClient.voice_status(client)
+        self.assertEqual(client.operation, "VOICE_STATUS")
+        self.assertNotIn("url", status)
+        self.assertEqual(status["revision"], 7)
+        self.assertEqual(status["certificateFingerprint"], "abcdef")
+        self.assertEqual(status["tokenSuffix"], "1234")
+
+        client.request = lambda _operation: "VOICE_STATUS 1 0 7 wss://secret.example abcdef 1234"
+        with self.assertRaisesRegex(CLI.CliError, "malformed voice status"):
+            CLI.UsbControlClient.voice_status(client)
+
     def test_release_guest_profile_optimizes_size_and_compacts_call_stack(self) -> None:
         compile_flags, link_flags, aot_flags = CLI.guest_build_profile_flags("release", "xtensa")
         self.assertEqual(compile_flags, ["-Oz"])

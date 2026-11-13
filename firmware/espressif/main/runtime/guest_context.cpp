@@ -21,7 +21,7 @@ constexpr char kTag[] = "micropixel_guest";
 GuestContext::GuestContext(const micropixel_aot_package_t& package, device::DeviceServices& devices,
                            work::BackgroundExecutor& background_executor, std::string_view effective_locale,
                            const micropixel_system_launch_arguments_response_t& launch_arguments,
-                           GuestLogSink* log_sink)
+                           OpenSettingsSink open_settings, void* open_settings_context, GuestLogSink* log_sink)
     : devices_(devices),
       log_sink_(log_sink),
       clock_origin_us_(esp_timer_get_time()),
@@ -31,6 +31,7 @@ GuestContext::GuestContext(const micropixel_aot_package_t& package, device::Devi
       gpio_(devices_.gpio(), events_, timers_),
       haptics_(devices_.haptics(), events_, timers_),
       network_(devices_.managed_network(), events_, timers_, reinterpret_cast<const char*>(package.app_id)),
+      voice_(devices_.voice(), events_, clock_origin_us_),
       resources_(package, background_executor, devices_.graphics()),
       audio_playback_(package, devices_.audio(), events_, clock_origin_us_),
       pcm_stream_(devices_.audio(), events_, clock_origin_us_),
@@ -44,7 +45,7 @@ GuestContext::GuestContext(const micropixel_aot_package_t& package, device::Devi
       touch_events_(events_, devices_.input(), clock_origin_us_),
       key_events_(events_, devices_.input(), clock_origin_us_),
       timer_endpoint_(*this),
-      system_endpoint_(effective_locale, launch_arguments),
+      system_endpoint_(effective_locale, launch_arguments, open_settings, open_settings_context),
       storage_endpoint_(*this),
       resource_endpoint_(*this),
       random_endpoint_(*this),
@@ -57,9 +58,10 @@ GuestContext::GuestContext(const micropixel_aot_package_t& package, device::Devi
       haptics_endpoint_(*this),
       power_info_endpoint_(*this),
       network_endpoint_(*this),
+      voice_endpoint_(*this),
       service_registry_(timer_endpoint_, system_endpoint_, storage_endpoint_, resource_endpoint_, random_endpoint_,
                         graphics_endpoint_, input_endpoint_, audio_endpoint_, devices_endpoint_, sensors_endpoint_,
-                        gpio_endpoint_, haptics_endpoint_, power_info_endpoint_, network_endpoint_) {
+                        gpio_endpoint_, haptics_endpoint_, power_info_endpoint_, network_endpoint_, voice_endpoint_) {
     (void)std::snprintf(app_id_.data(), app_id_.size(), "%s", reinterpret_cast<const char*>(package.app_id));
     const auto audio_result = devices_.audio().ResumeAll();
     audio_foreground_ready_ = audio_result || audio_result.error().status == MICROPIXEL_STATUS_UNSUPPORTED;
@@ -81,6 +83,7 @@ GuestContext::~GuestContext() {
     direct_surface_.Shutdown();
     raster_.Shutdown();
     micropixel_check_heap("direct surface and raster shutdown");
+    voice_.Shutdown();
     events_.Close();
     network_.Shutdown();
     key_events_.Shutdown();
@@ -118,7 +121,12 @@ bool GuestContext::Suspend(TickType_t timeout) {
     }
     // First: the Guest may still be presenting until it reaches WaitEvent, and
     // the Hall snapshot below needs LVGL to own the panel again.
-    direct_surface_.Suspend();
+    auto direct_surface_result = direct_surface_.Suspend();
+    if (!direct_surface_result) {
+        direct_surface_.Resume();
+        ESP_LOGE(kTag, "Direct Surface suspend failed: status=%" PRId32, direct_surface_result.error().status);
+        return false;
+    }
     touch_events_.Suspend();
     key_events_.Suspend();
     sensors_.Suspend();

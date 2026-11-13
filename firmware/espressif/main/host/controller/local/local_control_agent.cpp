@@ -28,6 +28,7 @@ constexpr std::string_view kPrefix = "MPX1 ";
 constexpr size_t kMaximumPackageBytes = 8U * 1024U * 1024U;
 constexpr size_t kMaximumChunkBytes = 3072U;
 constexpr size_t kMaximumTerminalProfileBytes = 6144U;
+constexpr size_t kMaximumVoiceProfileBytes = 5400U;
 constexpr TickType_t kInstallTimeout = pdMS_TO_TICKS(120U * 1000U);
 constexpr uint64_t kInstallTimeoutUs = 120ULL * 1000ULL * 1000ULL;
 constexpr TickType_t kHostCommandTimeout = pdMS_TO_TICKS(5U * 60U * 1000U);
@@ -209,13 +210,15 @@ bool ParseKeyCode(const char* text, device::KeyCode& code) {
 LocalControlAgent::LocalControlAgent(device::LocalControl& transport, control::ControlDispatcher& controls,
                                      logging::SystemLogBuffer& system_logs, const device::BoardInfo& board_info,
                                      host::network::Network& network,
-                                     platform::network::ManagedHttpClient& managed_network)
+                                     platform::network::ManagedHttpClient& managed_network,
+                                     host::voice::VoiceEngine& voice)
     : transport_(transport),
       controls_(controls),
       system_logs_(system_logs),
       board_info_(board_info),
       network_(network),
-      managed_network_(managed_network) {
+      managed_network_(managed_network),
+      voice_(voice) {
     response_queue_bytes_ = static_cast<uint8_t*>(
         heap_caps_calloc(kResponseQueueCapacity, sizeof(Response), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     void* command_workspace_storage =
@@ -243,6 +246,7 @@ LocalControlAgent::LocalControlAgent(device::LocalControl& transport, control::C
 LocalControlAgent::~LocalControlAgent() {
     Stop();
     AbortTerminalConfigure();
+    AbortVoiceConfigure();
     if (install_timer_ != nullptr) {
         (void)esp_timer_stop_blocking(install_timer_, portMAX_DELAY);
         (void)esp_timer_delete(install_timer_);
@@ -297,6 +301,8 @@ void LocalControlAgent::Stop() {
     transport_.Unbind(this);
     controls_.SetLocalResultSink(nullptr, nullptr);
     AbortInstall();
+    AbortTerminalConfigure();
+    AbortVoiceConfigure();
     started_ = false;
 }
 
@@ -1043,6 +1049,129 @@ void LocalControlAgent::AbortTerminalConfigure() {
     terminal_config_ = {};
 }
 
+void LocalControlAgent::HandleVoiceConfigureBegin(uint32_t request_id, std::string_view arguments) {
+    const std::string_view size_text = TakeToken(arguments);
+    const std::string_view sha256_text = TakeToken(arguments);
+    size_t size = 0U;
+    std::array<uint8_t, 32U> sha256{};
+    if (voice_config_.data != nullptr || !ParseUnsigned(size_text, size) || size == 0U ||
+        size > kMaximumVoiceProfileBytes || !ParseSha256(sha256_text, sha256) || !TrimLeft(arguments).empty()) {
+        (void)QueueResponse(request_id, "ERROR",
+                            voice_config_.data != nullptr ? "voice_config_busy" : "invalid_voice_config");
+        return;
+    }
+    uint8_t* data = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (data == nullptr) {
+        (void)QueueResponse(request_id, "ERROR", "out_of_memory");
+        return;
+    }
+    voice_config_ = {.data = data, .size = size, .request_id = request_id, .sha256 = sha256};
+    (void)QueueResponse(request_id, "OK", "VOICE_CONFIG_READY 3072");
+}
+
+void LocalControlAgent::HandleVoiceConfigureChunk(uint32_t request_id, std::string_view arguments) {
+    const std::string_view offset_text = TakeToken(arguments);
+    const std::string_view encoded = TakeToken(arguments);
+    size_t offset = 0U;
+    if (voice_config_.data == nullptr || request_id != voice_config_.request_id) {
+        (void)QueueResponse(request_id, "ERROR", "no_voice_config_session");
+        return;
+    }
+    if (!ParseUnsigned(offset_text, offset) || offset != voice_config_.received || encoded.empty() ||
+        encoded.size() > 4096U || !TrimLeft(arguments).empty()) {
+        (void)QueueResponse(request_id, "ERROR", "invalid_voice_config_chunk");
+        return;
+    }
+    size_t decoded_size = 0U;
+    const size_t remaining = voice_config_.size - voice_config_.received;
+    const int status = mbedtls_base64_decode(voice_config_.data + voice_config_.received, remaining, &decoded_size,
+                                             reinterpret_cast<const unsigned char*>(encoded.data()), encoded.size());
+    if (status != 0 || decoded_size == 0U || decoded_size > remaining) {
+        (void)QueueResponse(request_id, "ERROR", "invalid_voice_config_chunk");
+        return;
+    }
+    voice_config_.received += decoded_size;
+    std::array<char, 64U> detail{};
+    (void)std::snprintf(detail.data(), detail.size(), "VOICE_CONFIG_CHUNK %zu", voice_config_.received);
+    (void)QueueResponse(request_id, "OK", detail.data());
+}
+
+void LocalControlAgent::HandleVoiceConfigureCommit(uint32_t request_id, std::string_view arguments) {
+    if (!TrimLeft(arguments).empty() || voice_config_.data == nullptr || request_id != voice_config_.request_id) {
+        (void)QueueResponse(request_id, "ERROR", "no_voice_config_session");
+        return;
+    }
+    if (voice_config_.received != voice_config_.size) {
+        (void)QueueResponse(request_id, "ERROR", "voice_config_incomplete");
+        return;
+    }
+    std::array<uint8_t, 32U> digest{};
+    size_t digest_size = 0U;
+    if (psa_crypto_init() != PSA_SUCCESS ||
+        psa_hash_compute(PSA_ALG_SHA_256, voice_config_.data, voice_config_.size, digest.data(), digest.size(),
+                         &digest_size) != PSA_SUCCESS ||
+        digest_size != digest.size() || digest != voice_config_.sha256) {
+        AbortVoiceConfigure();
+        (void)QueueResponse(request_id, "ERROR", "voice_config_sha256_mismatch");
+        return;
+    }
+    const int32_t status = voice_.Configure({voice_config_.data, voice_config_.size});
+    AbortVoiceConfigure();
+    if (status != MICROPIXEL_STATUS_OK) {
+        (void)QueueResponse(request_id, "ERROR",
+                            status == MICROPIXEL_STATUS_WOULD_BLOCK ? "voice_busy" : "invalid_voice_config");
+        return;
+    }
+    (void)QueueResponse(request_id, "OK", "VOICE_CONFIGURED");
+}
+
+void LocalControlAgent::HandleVoiceConfigureAbort(uint32_t request_id, std::string_view arguments) {
+    if (!TrimLeft(arguments).empty() || voice_config_.data == nullptr || request_id != voice_config_.request_id) {
+        (void)QueueResponse(request_id, "ERROR", "no_voice_config_session");
+        return;
+    }
+    AbortVoiceConfigure();
+    (void)QueueResponse(request_id, "OK", "VOICE_CONFIG_ABORTED");
+}
+
+void LocalControlAgent::HandleVoiceStatus(uint32_t request_id, std::string_view arguments) {
+    if (!TrimLeft(arguments).empty()) {
+        (void)QueueResponse(request_id, "ERROR", "invalid_arguments");
+        return;
+    }
+    const auto status = voice_.ProfileStatus();
+    std::array<char, 192U> detail{};
+    const int written =
+        std::snprintf(detail.data(), detail.size(), "VOICE_STATUS %u %u %" PRIu32 " %s %s", status.configured ? 1U : 0U,
+                      status.allow_insecure ? 1U : 0U, status.revision,
+                      status.certificate_fingerprint[0] == '\0' ? "-" : status.certificate_fingerprint.data(),
+                      status.token_suffix[0] == '\0' ? "-" : status.token_suffix.data());
+    if (written <= 0 || static_cast<size_t>(written) >= detail.size()) {
+        (void)QueueResponse(request_id, "ERROR", "response_encoding_failed");
+        return;
+    }
+    (void)QueueResponse(request_id, "OK", detail.data());
+}
+
+void LocalControlAgent::HandleVoiceClear(uint32_t request_id, std::string_view arguments) {
+    if (!TrimLeft(arguments).empty()) {
+        (void)QueueResponse(request_id, "ERROR", "invalid_arguments");
+        return;
+    }
+    const int32_t status = voice_.ClearProfile();
+    (void)QueueResponse(request_id, status == MICROPIXEL_STATUS_OK ? "OK" : "ERROR",
+                        status == MICROPIXEL_STATUS_OK ? "VOICE_CLEARED" : "voice_busy");
+}
+
+void LocalControlAgent::AbortVoiceConfigure() {
+    if (voice_config_.data != nullptr) {
+        auto* secret = reinterpret_cast<volatile uint8_t*>(voice_config_.data);
+        for (size_t index = 0U; index < voice_config_.size; ++index) secret[index] = 0U;
+        heap_caps_free(voice_config_.data);
+    }
+    voice_config_ = {};
+}
+
 bool LocalControlAgent::ArmInstallTimeout(uint64_t delay_us) {
     if (install_timer_ == nullptr || delay_us == 0U) {
         return false;
@@ -1173,6 +1302,18 @@ void LocalControlAgent::HandleCommand(const char* command) {
         HandleTerminalStatus(request_id, remaining);
     } else if (operation == "TERMINAL_CLEAR") {
         HandleTerminalClear(request_id, remaining);
+    } else if (operation == "VOICE_CONFIGURE_BEGIN") {
+        HandleVoiceConfigureBegin(request_id, remaining);
+    } else if (operation == "VOICE_CONFIGURE_CHUNK") {
+        HandleVoiceConfigureChunk(request_id, remaining);
+    } else if (operation == "VOICE_CONFIGURE_COMMIT") {
+        HandleVoiceConfigureCommit(request_id, remaining);
+    } else if (operation == "VOICE_CONFIGURE_ABORT") {
+        HandleVoiceConfigureAbort(request_id, remaining);
+    } else if (operation == "VOICE_STATUS") {
+        HandleVoiceStatus(request_id, remaining);
+    } else if (operation == "VOICE_CLEAR") {
+        HandleVoiceClear(request_id, remaining);
     } else {
         (void)QueueResponse(request_id, "ERROR", "unsupported_command");
     }

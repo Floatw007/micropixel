@@ -19,6 +19,9 @@
 | [BundleFS](design/bundlefs.zh-CN.md) | [音频](development/game-audio.zh-CN.md) |
 | [应用商店](design/app-store.zh-CN.md) | [定时器与功耗](development/timers-and-idle-power.zh-CN.md) |
 | [USB 控制](design/usb-local-control.zh-CN.md) | [S3 板型](development/esp32-s3-box-3-bring-up.zh-CN.md) |
+| [网络遥测](design/network-telemetry.zh-CN.md) | [系统语言与 TTF 字体](development/language-fonts.zh-CN.md) |
+| — | [Metalio-Claw4 原厂适配](development/metalio-claw4-factory-adaptation.zh-CN.md) |
+| — | [食堂商家终端](development/canteen-merchant-terminal.zh-CN.md) |
 | — | [ESP32-P4 Function EV Board](development/esp32-p4-function-ev-board-bring-up.zh-CN.md) |
 | — | [Ubuntu Function EV 开发环境](development/ubuntu-function-ev-development.zh-CN.md) |
 | — | [固件发布](development/firmware-release.zh-CN.md) |

@@ -1,8 +1,8 @@
-// Graphics 1.5 Direct Surface, positive path through the SDK with a
+// Direct Surface, positive path through the SDK with a
 // HostSurface (Host-owned buffers, no pinned memory needed): a double-buffered
 // surface presents 60 full frames and every buffer comes back through
-// kSurfaceReleased in presentation order. Frames are painted with Graphics 1.6
-// raster rects when the Host has kernels, otherwise presented as they are.
+// kSurfaceReleased in presentation order. Frames are painted with raster rects
+// when the Host has kernels, otherwise presented as they are.
 // Exit codes 30..49 name the failed step.
 #include "abi/micropixel_abi.h"
 #include "sdk/micropixel.hpp"

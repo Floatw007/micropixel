@@ -10,7 +10,7 @@
 
 namespace micropixel {
 
-// Grid raycaster front end over the Host raster kernels (Graphics 1.6).
+// Grid raycaster front end over the Host raster kernels.
 //
 // The App owns the map grid, the camera and the list of billboards; the Raycaster
 // runs the per-column geometry (ray DDA, wall and slab projection, floor row

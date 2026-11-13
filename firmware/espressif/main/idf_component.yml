@@ -84,6 +84,12 @@ dependencies:
     version: "1.*"
   esphome/micro-opus:
     version: "0.4.1"
+  espressif/esp_websocket_client:
+    version: "1.6.1"
+  espressif/esp-sr:
+    version: "2.5.5"
+    rules:
+      - if: "target == esp32p4"
   espressif/esp_wifi_remote:
     version: ">=0.10,<2.0"
     rules:

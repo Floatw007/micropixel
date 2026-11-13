@@ -18,6 +18,7 @@
 #include "host/network/network_maintenance.hpp"
 #include "host/time/network_time.hpp"
 #include "host/ui/system_shell.hpp"
+#include "host/voice/voice_engine.hpp"
 #include "nvs_flash.h"
 #include "platform/network/managed_http_client.hpp"
 #include "platform/network/network_route_source.hpp"
@@ -114,6 +115,9 @@ void FirmwareApp::Run() {
     if (!network_maintenance.Start()) ESP_LOGE(kTag, "network maintenance timer unavailable");
     static MICROPIXEL_EXT_RAM_BSS platform::network::ManagedHttpClient managed_network(network);
     if (!managed_network.valid()) ESP_LOGE(kTag, "managed Guest network service is unavailable");
+    static MICROPIXEL_EXT_RAM_BSS host::voice::VoiceEngine voice_engine(*services.audio, *services.audio_input,
+                                                                        network);
+    if (!voice_engine.valid()) ESP_LOGE(kTag, "voice engine is unavailable");
 
     // These composition-root objects live for the lifetime of the firmware.
     // Keep them out of app_main's bounded stack and, on PSRAM boards, out of
@@ -122,7 +126,7 @@ void FirmwareApp::Run() {
     static MICROPIXEL_EXT_RAM_BSS device::DeviceServices devices(
         *services.graphics, services.board_info.display, *services.input, *services.audio, *services.audio_input,
         *services.random, *services.devices, *services.sensors, *services.gpio, *services.haptics, *services.battery,
-        managed_network);
+        managed_network, voice_engine);
     logging::SystemLogBuffer& system_logs = logging::SystemLogs();
     static MICROPIXEL_EXT_RAM_BSS control::ControlDispatcher controls(
         [](void* context, const char* app_id) {
@@ -132,7 +136,7 @@ void FirmwareApp::Run() {
     static MICROPIXEL_EXT_RAM_BSS remote_control::RemoteControlAgent remote_control(
         network, services.board_info, controls, system_logs, shell.SupportsScreenCapture());
     static MICROPIXEL_EXT_RAM_BSS local_control::LocalControlAgent local_control(
-        *services.local_control, controls, system_logs, services.board_info, network, managed_network);
+        *services.local_control, controls, system_logs, services.board_info, network, managed_network, voice_engine);
     if (!local_control.Start()) {
         ESP_LOGW(kTag, "local control is unavailable for this boot");
     }

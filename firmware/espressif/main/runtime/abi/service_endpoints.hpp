@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include "runtime/abi/service_registry.hpp"
+#include "runtime/system_action.hpp"
 
 namespace micropixel::runtime {
 
@@ -91,7 +92,8 @@ class NetworkServiceEndpoint final : public ServiceHandler {
 class SystemServiceEndpoint final : public ServiceHandler {
    public:
     SystemServiceEndpoint(std::string_view effective_locale,
-                          const micropixel_system_launch_arguments_response_t& launch_arguments);
+                          const micropixel_system_launch_arguments_response_t& launch_arguments,
+                          OpenSettingsSink open_settings, void* open_settings_context);
     [[nodiscard]] ServiceDescriptor Describe() const override;
     [[nodiscard]] int32_t Call(uint32_t method_id, const uint8_t* request, uint32_t request_size, uint8_t* response,
                                uint32_t response_capacity, uint32_t& response_size_out) override;
@@ -100,6 +102,8 @@ class SystemServiceEndpoint final : public ServiceHandler {
     std::array<char, MICROPIXEL_LOCALE_TAG_MAX_BYTES + 1U> effective_locale_{};
     uint16_t effective_locale_length_{};
     micropixel_system_launch_arguments_response_t launch_arguments_{};
+    OpenSettingsSink open_settings_{};
+    void* open_settings_context_{};
 };
 
 class TimerServiceEndpoint final : public ServiceHandler {
@@ -172,6 +176,17 @@ class InputServiceEndpoint final : public ServiceHandler {
 class AudioServiceEndpoint final : public ServiceHandler {
    public:
     explicit AudioServiceEndpoint(GuestContext& context) : context_(context) {}
+    [[nodiscard]] ServiceDescriptor Describe() const override;
+    [[nodiscard]] int32_t Call(uint32_t method_id, const uint8_t* request, uint32_t request_size, uint8_t* response,
+                               uint32_t response_capacity, uint32_t& response_size_out) override;
+
+   private:
+    GuestContext& context_;
+};
+
+class VoiceServiceEndpoint final : public ServiceHandler {
+   public:
+    explicit VoiceServiceEndpoint(GuestContext& context) : context_(context) {}
     [[nodiscard]] ServiceDescriptor Describe() const override;
     [[nodiscard]] int32_t Call(uint32_t method_id, const uint8_t* request, uint32_t request_size, uint8_t* response,
                                uint32_t response_capacity, uint32_t& response_size_out) override;

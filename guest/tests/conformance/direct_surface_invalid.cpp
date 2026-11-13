@@ -1,4 +1,4 @@
-// Graphics 1.5 Direct Surface, negative path on the raw ABI with Host-owned
+// Direct Surface, negative path on the raw ABI with Host-owned
 // buffers (the default; the Bundle needs no pinned memory): every malformed
 // request must be refused with the documented status and never trap the Guest.
 // Exit codes 50..79 name the failed step.

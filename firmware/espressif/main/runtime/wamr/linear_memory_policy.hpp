@@ -18,7 +18,7 @@ inline constexpr size_t kGuestLinearMemoryAllocationOverhead = 64U;
     // The Host reserve can occupy other free blocks; only the Guest allocation
     // itself must fit in one contiguous block.
     const size_t available_bytes = state.free_bytes > reserve_bytes ? state.free_bytes - reserve_bytes : 0U;
-    const size_t allocation_bytes = std::min(state.largest_free_block, available_bytes);
+    const size_t allocation_bytes = std::min(GuestPsramAllocationCapacity(state), available_bytes);
     const size_t pages = allocation_bytes > kGuestLinearMemoryAllocationOverhead
                              ? (allocation_bytes - kGuestLinearMemoryAllocationOverhead) / kWasmPageBytes
                              : 0U;

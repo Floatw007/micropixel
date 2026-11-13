@@ -15,6 +15,7 @@
 #include "host/controller/control_dispatcher.hpp"
 #include "host/logging/system_log_buffer.hpp"
 #include "host/network/network.hpp"
+#include "host/voice/voice_engine.hpp"
 #include "platform/network/managed_http_client.hpp"
 
 namespace micropixel::firmware::local_control {
@@ -25,7 +26,8 @@ class LocalControlAgent final {
    public:
     LocalControlAgent(device::LocalControl& transport, control::ControlDispatcher& controls,
                       logging::SystemLogBuffer& system_logs, const device::BoardInfo& board_info,
-                      host::network::Network& network, platform::network::ManagedHttpClient& managed_network);
+                      host::network::Network& network, platform::network::ManagedHttpClient& managed_network,
+                      host::voice::VoiceEngine& voice);
     ~LocalControlAgent();
     LocalControlAgent(const LocalControlAgent&) = delete;
     LocalControlAgent& operator=(const LocalControlAgent&) = delete;
@@ -96,7 +98,14 @@ class LocalControlAgent final {
     void HandleTerminalConfigureAbort(uint32_t request_id, std::string_view arguments);
     void HandleTerminalStatus(uint32_t request_id, std::string_view arguments);
     void HandleTerminalClear(uint32_t request_id, std::string_view arguments);
+    void HandleVoiceConfigureBegin(uint32_t request_id, std::string_view arguments);
+    void HandleVoiceConfigureChunk(uint32_t request_id, std::string_view arguments);
+    void HandleVoiceConfigureCommit(uint32_t request_id, std::string_view arguments);
+    void HandleVoiceConfigureAbort(uint32_t request_id, std::string_view arguments);
+    void HandleVoiceStatus(uint32_t request_id, std::string_view arguments);
+    void HandleVoiceClear(uint32_t request_id, std::string_view arguments);
     void AbortTerminalConfigure();
+    void AbortVoiceConfigure();
     [[nodiscard]] bool ArmInstallTimeout(uint64_t delay_us);
     void DisarmInstallTimeout();
     void AbortInstall();
@@ -108,6 +117,7 @@ class LocalControlAgent final {
     const device::BoardInfo& board_info_;
     host::network::Network& network_;
     platform::network::ManagedHttpClient& managed_network_;
+    host::voice::VoiceEngine& voice_;
     host::network::NetworkSnapshot network_workspace_{};
     StaticQueue_t response_queue_storage_{};
     uint8_t* response_queue_bytes_{};
@@ -118,6 +128,7 @@ class LocalControlAgent final {
     control::HostSnapshot* snapshot_workspace_{};
     InstallSession install_{};
     TerminalConfigSession terminal_config_{};
+    TerminalConfigSession voice_config_{};
     esp_timer_handle_t install_timer_{};
     esp_timer_handle_t restart_timer_{};
     std::atomic<bool> install_timeout_due_{};

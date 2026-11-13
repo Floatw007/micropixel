@@ -33,6 +33,7 @@ list(APPEND micropixel_sources
     "runtime/services/raster_service.cpp"
     "runtime/services/sensor_service.cpp"
     "runtime/services/timer_service.cpp"
+    "runtime/services/voice_service.cpp"
     "runtime/touch_event_bridge.cpp"
     "runtime/wamr/diagnostics.c"
     "runtime/wamr/watchdog.c"
@@ -40,5 +41,5 @@ list(APPEND micropixel_sources
 )
 list(APPEND micropixel_requires
     esp_new_jpeg esp_partition esp_psram esp_timer esphome__micro-opus espressif__libpng
-    heap mbedtls nvs_flash spi_flash wasm-micro-runtime
+    esp_websocket_client heap mbedtls nvs_flash spi_flash wasm-micro-runtime
 )

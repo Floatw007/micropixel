@@ -12,6 +12,7 @@
 #include "platform/input/esp_lcd_touch_input.hpp"
 #include "platform/lvgl/guest_graphics_engine.hpp"
 #include "platform/lvgl/lvgl_wakeup.hpp"
+#include "sdkconfig.h"
 
 namespace micropixel::platform::esp32_p4_function_ev_board {
 
@@ -27,6 +28,7 @@ class FunctionEvDisplayIdleController final {
 
     [[nodiscard]] esp_err_t Start(lv_display_t* display, input::EspLcdTouchInput& touch_input);
     [[nodiscard]] bool EnsureAwake(TickType_t timeout_ticks = pdMS_TO_TICKS(5000U));
+    void SetIdleTimeoutMinutes(uint8_t minutes);
 
    private:
     enum class State : uint8_t {
@@ -53,6 +55,8 @@ class FunctionEvDisplayIdleController final {
     TaskHandle_t task_{};
     std::atomic<State> state_{State::kActive};
     std::atomic<int64_t> last_activity_us_{};
+    std::atomic<int64_t> idle_timeout_us_{static_cast<int64_t>(CONFIG_MICROPIXEL_FUNCTION_EV_DISPLAY_IDLE_TIMEOUT_MS) *
+                                          1000};
     std::atomic<bool> wake_requested_{};
 };
 

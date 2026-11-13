@@ -96,12 +96,16 @@ std::optional<SystemUiAction> SystemShell::PollAction(TickType_t timeout) {
         } else if (action.type == SystemUiActionType::kUserActivity) {
             user_activity_pending_.store(false, std::memory_order_release);
             user_activity_queued_.store(false, std::memory_order_release);
+        } else if (action.type == SystemUiActionType::kOpenSystemMenu &&
+                   open_system_menu_pending_.exchange(false, std::memory_order_acq_rel)) {
+            open_system_menu_queued_.store(false, std::memory_order_release);
         }
         QueuePendingWifiStateChange();
         QueuePendingBatteryStateChange();
         QueuePendingTimeStateChange();
         QueuePendingRemoteCommand();
         QueuePendingUserActivity();
+        QueuePendingOpenSystemMenu();
         if (action.type != SystemUiActionType::kPowerButtonPressed) {
             QueuePendingPowerButton();
         }
@@ -190,6 +194,10 @@ std::expected<void, SystemUiError> SystemShell::ShowPowerManagement(const PowerM
 void SystemShell::UpdatePowerManagement(const PowerManagementModel& model) { ui_.UpdatePowerManagement(model); }
 
 void SystemShell::LeavePowerManagement() { ui_.LeavePowerManagement(); }
+
+bool SystemShell::SupportsDisplaySleepTimeout() const { return ui_.SupportsDisplaySleepTimeout(); }
+
+void SystemShell::SetDisplaySleepTimeout(uint8_t minutes) { ui_.SetDisplaySleepTimeout(minutes); }
 
 std::expected<void, SystemUiError> SystemShell::ShowAppearance(const AppearanceModel& model) {
     if (action_queue_ == nullptr) {
@@ -463,6 +471,17 @@ void SystemShell::QueuePendingUserActivity() {
     }
 }
 
+void SystemShell::QueuePendingOpenSystemMenu() {
+    if (action_queue_ == nullptr || !open_system_menu_pending_.load(std::memory_order_acquire) ||
+        open_system_menu_queued_.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    const SystemUiAction action{.type = SystemUiActionType::kOpenSystemMenu};
+    if (xQueueSend(action_queue_, &action, 0U) != pdTRUE) {
+        open_system_menu_queued_.store(false, std::memory_order_release);
+    }
+}
+
 void SystemShell::RefreshExternalPowerState() {
     bool connected = false;
     const bool available =
@@ -531,6 +550,7 @@ void SystemShell::ResetActionQueue() {
     time_state_change_queued_.store(false, std::memory_order_release);
     remote_command_queued_.store(false, std::memory_order_release);
     user_activity_queued_.store(false, std::memory_order_release);
+    open_system_menu_queued_.store(false, std::memory_order_release);
     QueuePendingPowerButton();
     QueuePendingPowerOff();
     QueuePendingWifiStateChange();
@@ -538,6 +558,7 @@ void SystemShell::ResetActionQueue() {
     QueuePendingTimeStateChange();
     QueuePendingRemoteCommand();
     QueuePendingUserActivity();
+    QueuePendingOpenSystemMenu();
 }
 
 void SystemShell::ReceiveAction(void* context, const SystemUiAction& action) {
@@ -557,6 +578,17 @@ void SystemShell::ReceiveAction(void* context, const SystemUiAction& action) {
             ESP_LOGW(kTag, "System action queue full; dropped action=%u", static_cast<unsigned>(action.type));
         }
     }
+}
+
+bool SystemShell::NotifyOpenSystemMenu() {
+    if (action_queue_ == nullptr) {
+        ESP_LOGW(kTag, "system settings request rejected: action queue unavailable");
+        return false;
+    }
+    open_system_menu_pending_.store(true, std::memory_order_release);
+    QueuePendingOpenSystemMenu();
+    ESP_LOGI(kTag, "system settings request queued");
+    return true;
 }
 
 }  // namespace micropixel::host_ui

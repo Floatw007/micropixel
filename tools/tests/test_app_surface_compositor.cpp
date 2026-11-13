@@ -90,7 +90,8 @@ class SceneMessage final {
                                .size = sizeof(micropixel_graphics_scene_node_link_record_t)},
                     .node_id = node,
                     .parent_container_id = 0U,
-                    .sibling_order = static_cast<uint16_t>(node + 10U)});
+                    .sibling_order = static_cast<uint16_t>(node + 10U),
+                    .reserved0 = 0U});
             }
         }
         const micropixel_graphics_scene_header_t header{
@@ -480,21 +481,30 @@ void SpriteBatchPatchDamagesOnlyOldTailAndNewHead() {
         .capacity = 2U,
         .opacity = 255U,
         .reserved0 = 0U});
-    const micropixel_graphics_scene_sprite_instance_t instances[2]{
-        {.x = 0,
-         .y = 0,
-         .width = 2,
-         .height = 1,
-         .rgb888 = 0x00ff00U,
-         .opacity = 255U,
-         .flags = MICROPIXEL_GRAPHICS_SCENE_INSTANCE_VISIBLE},
-        {.x = 4,
-         .y = 0,
-         .width = 2,
-         .height = 1,
-         .rgb888 = 0x00ff00U,
-         .opacity = 255U,
-         .flags = MICROPIXEL_GRAPHICS_SCENE_INSTANCE_VISIBLE}};
+    const micropixel_graphics_scene_sprite_instance_t instances[2]{{.x = 0,
+                                                                    .y = 0,
+                                                                    .width = 2,
+                                                                    .height = 1,
+                                                                    .source_x = 0,
+                                                                    .source_y = 0,
+                                                                    .source_width = 0,
+                                                                    .source_height = 0,
+                                                                    .rgb888 = 0x00ff00U,
+                                                                    .opacity = 255U,
+                                                                    .flags = MICROPIXEL_GRAPHICS_SCENE_INSTANCE_VISIBLE,
+                                                                    .reserved0 = 0U},
+                                                                   {.x = 4,
+                                                                    .y = 0,
+                                                                    .width = 2,
+                                                                    .height = 1,
+                                                                    .source_x = 0,
+                                                                    .source_y = 0,
+                                                                    .source_width = 0,
+                                                                    .source_height = 0,
+                                                                    .rgb888 = 0x00ff00U,
+                                                                    .opacity = 255U,
+                                                                    .flags = MICROPIXEL_GRAPHICS_SCENE_INSTANCE_VISIBLE,
+                                                                    .reserved0 = 0U}};
     keyframe.AddInstances(0U, 0U, kInstanceMask, instances, 2U);
     assert(fixture.Apply(keyframe.Finish(), 12, 1) == MICROPIXEL_STATUS_OK);
     assert(fixture.compositor.PresentScene(fixture.scene, surface, nullptr, nullptr).status ==
@@ -505,9 +515,14 @@ void SpriteBatchPatchDamagesOnlyOldTailAndNewHead() {
                                                                .y = 0,
                                                                .width = 2,
                                                                .height = 1,
+                                                               .source_x = 0,
+                                                               .source_y = 0,
+                                                               .source_width = 0,
+                                                               .source_height = 0,
                                                                .rgb888 = 0x00ff00U,
                                                                .opacity = 255U,
-                                                               .flags = MICROPIXEL_GRAPHICS_SCENE_INSTANCE_VISIBLE};
+                                                               .flags = MICROPIXEL_GRAPHICS_SCENE_INSTANCE_VISIBLE,
+                                                               .reserved0 = 0U};
     patch.AddInstances(0U, 0U, MICROPIXEL_GRAPHICS_SCENE_INSTANCE_GEOMETRY, &new_head, 1U);
     assert(fixture.Apply(patch.Finish(), 12, 1) == MICROPIXEL_STATUS_OK);
     const auto result = fixture.compositor.PresentScene(fixture.scene, surface, nullptr, nullptr);
@@ -574,6 +589,10 @@ void AtlasFramePatchDamagesOnlyTheSpriteBounds() {
                  .flags = MICROPIXEL_GRAPHICS_SCENE_NODE_VISIBLE,
                  .reserved0 = 0U,
                  .property_mask = MICROPIXEL_GRAPHICS_SCENE_NODE_CONTENT},
+        .x = 0,
+        .y = 0,
+        .width = 0,
+        .height = 0,
         .texture_handle = 7U,
         .source_x = 2,
         .source_y = 0,

@@ -116,6 +116,12 @@ class Esp32P4FunctionEvBoard final : public Board {
           presentation_(state_),
           system_ui_(state_.ui, presentation_) {
         state_.guest_graphics.SetPresentationHooks(state_.ui.GuestFrameHooks());
+        system_ui_.BindDisplaySleepSetter(
+            [](void* context, uint8_t minutes) {
+                static_cast<esp32_p4_function_ev_board::FunctionEvDisplayIdleController*>(context)
+                    ->SetIdleTimeoutMinutes(minutes);
+            },
+            &state_.display_idle);
     }
 
     [[nodiscard]] esp_err_t Initialize(BoardContext& context) override {

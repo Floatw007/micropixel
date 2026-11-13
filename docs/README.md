@@ -21,6 +21,9 @@ The following detailed guides are in Simplified Chinese.
 | [BundleFS](design/bundlefs.zh-CN.md) | [Audio](development/game-audio.zh-CN.md) |
 | [App Store](design/app-store.zh-CN.md) | [Timers and power](development/timers-and-idle-power.zh-CN.md) |
 | [USB control](design/usb-local-control.zh-CN.md) | [S3 boards](development/esp32-s3-box-3-bring-up.zh-CN.md) |
+| [Network telemetry](design/network-telemetry.zh-CN.md) | [System language and fonts](development/language-fonts.zh-CN.md) |
+| — | [Metalio-Claw4 factory adaptation](development/metalio-claw4-factory-adaptation.zh-CN.md) |
+| — | [Canteen merchant terminal](development/canteen-merchant-terminal.zh-CN.md) |
 | — | [ESP32-P4 Function EV Board](development/esp32-p4-function-ev-board-bring-up.zh-CN.md) |
 | — | [Ubuntu Function EV environment](development/ubuntu-function-ev-development.zh-CN.md) |
 | — | [Firmware releases](development/firmware-release.zh-CN.md) |

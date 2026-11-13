@@ -14,6 +14,10 @@ class WifiRadio {
 
     [[nodiscard]] virtual esp_err_t Initialize() = 0;
     [[nodiscard]] virtual esp_err_t OnStationStarted() = 0;
+    [[nodiscard]] virtual esp_err_t SetRealtimeMode(bool enabled) {
+        (void)enabled;
+        return ESP_OK;
+    }
     [[nodiscard]] virtual const char* Name() const = 0;
     // Slow transports opt in so WifiManager can keep system UI startup on the
     // foreground path while native radios retain their synchronous behavior.

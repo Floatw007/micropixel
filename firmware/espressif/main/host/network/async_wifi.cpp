@@ -83,6 +83,9 @@ std::expected<void, device::WifiError> AsyncWifi::Disconnect() { return Submit(O
 std::expected<void, device::WifiError> AsyncWifi::Forget(std::string_view ssid) {
     return Submit(Operation::kForget, false, ssid);
 }
+std::expected<void, device::WifiError> AsyncWifi::SetRealtimeMode(bool enabled) {
+    return Submit(Operation::kRealtime, enabled);
+}
 void AsyncWifi::Run(void* context) { static_cast<AsyncWifi*>(context)->Drain(); }
 void AsyncWifi::Drain() {
     for (;;) {
@@ -121,6 +124,9 @@ void AsyncWifi::Drain() {
                 break;
             case Operation::kForget:
                 result = driver_.Forget(command.ssid.data());
+                break;
+            case Operation::kRealtime:
+                result = driver_.SetRealtimeMode(command.enabled);
                 break;
         }
         workspace_.~WifiSnapshot();

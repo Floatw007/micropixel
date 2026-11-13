@@ -1,4 +1,4 @@
-// Audio 1.2 Guest PCM stream through the SDK: opens a stream at the mix rate
+// Guest PCM stream through the SDK: opens a stream at the mix rate
 // and at half of it, streams a sine through ring backpressure, receives the
 // low-water event and closes cleanly. Exit codes 50..59 name the failed step.
 #include <type_traits>
@@ -45,7 +45,7 @@ int main() {
     micropixel::Audio audio = app.audio();
     auto info = audio.info();
     if (!info || !info->supports_pcm_stream || info->max_pcm_streams == 0U) {
-        app.log().Error("audio_pcm_stream: Audio 1.2 PCM stream capability missing");
+        app.log().Error("audio_pcm_stream: PCM stream capability missing");
         return 50;
     }
     const uint32_t mix_rate = info->sample_rate;

@@ -90,6 +90,8 @@ already covers the need; apps must not re-implement these locally.
 | Persistent scores and settings | `KVStore::GetU32Or/SetU32/GetBytes` | `storage.hpp` |
 | Launch flags and numeric options | `LaunchArguments::HasFlag/GetUnsigned/FindValue` | `launch_arguments.hpp` |
 | Locale-aware strings | `Localization::CurrentLocale` + generated string tables | `localization.hpp` |
+| Managed HTTPS requests (Host-issued) | `Network::info()/Start()`, `NetworkRequest::Read/Cancel/Close` | `network.hpp` |
+| Voice sessions, transcript/response text, preferences | `app.voice()`, `Voice::StartSession/CancelSession/ReadText` | `voice.hpp` |
 | Haptics, GPIO, power, device discovery | `Haptics`, `Gpio`, `PowerInfo`, `Devices` | `haptics.hpp`, `gpio.hpp`, `power_info.hpp`, `devices.hpp` |
 
 ## Game helpers

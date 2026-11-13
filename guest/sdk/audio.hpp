@@ -26,7 +26,7 @@ struct AudioInfo final {
     uint16_t max_clips{};
     uint16_t max_playbacks{};
     bool supports_ogg_opus{};
-    // Audio 1.2: Guest PCM streams (0 when the Host predates them).
+    // Guest PCM streams (0 when the Host predates them).
     uint16_t max_pcm_streams{};
     bool supports_pcm_stream{};
     bool supports_input_pcm{};

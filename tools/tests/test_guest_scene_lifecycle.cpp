@@ -23,7 +23,9 @@ extern "C" int32_t micropixel_service_open(uint32_t service_id, uint32_t require
     assert(required_interface_version ==
            MICROPIXEL_INTERFACE_VERSION(MICROPIXEL_GRAPHICS_INTERFACE_MAJOR, MICROPIXEL_GRAPHICS_INTERFACE_MINOR));
     assert(info_out != nullptr && info_capacity >= sizeof(*info_out));
-    *info_out = {.size = sizeof(*info_out), .service_handle = 1U, .flags = 0U};
+    *info_out = {};
+    info_out->size = sizeof(*info_out);
+    info_out->service_handle = 1U;
     return MICROPIXEL_STATUS_OK;
 }
 

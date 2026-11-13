@@ -177,7 +177,7 @@ class RendererInfo final {
     friend class Renderer;
 };
 
-// Full-screen RGB565 frames scanned out by the Host (Graphics 1.5). The App
+// Full-screen RGB565 frames scanned out by the Host. The App
 // fills one buffer, Presents it and moves on to a free one. A presented buffer
 // belongs to the Host until Application delivers the matching
 // EventType::kSurfaceReleased, which also updates AcquireFree()/Busy().
@@ -271,7 +271,7 @@ class DirectSurface {
 
 // DirectSurface whose buffers live in Host memory. The Guest never maps them:
 // it uploads INDEX8 resources once through RasterResources and draws each frame
-// by handing the Host a RasterDrawList (Graphics 1.6). Needs no pinned Guest
+// by handing the Host a RasterDrawList. Needs no pinned Guest
 // memory. Requires RendererInfo::raster_supported() to draw anything.
 class HostSurface final : public DirectSurface {
    public:
@@ -397,7 +397,7 @@ struct RasterVertex final {
     }
 };
 
-// Draw list for one HostSurface buffer (Graphics 1.6). Records are encoded
+// Draw list for one HostSurface buffer. Records are encoded
 // into a fixed wire buffer and handed to the Host, which rasterizes them
 // synchronously into the buffer; a full wire buffer is flushed automatically,
 // so a list may hold any number of records. Only one list is open at a time,
@@ -528,7 +528,7 @@ Result<void> HostSurface::Update(uint32_t buffer_index, Function&& function) con
     return list.Finish();
 }
 
-// Upload entry for the Host raster kernels' resources (Graphics 1.6): INDEX8
+// Upload entry for the Host raster kernels' resources: INDEX8
 // textures, lit palettes and warp maps that HostSurface draw lists sample.
 // The Guest uploads them once, then per frame casts its geometry and emits
 // Column/SpanPair/Sprite/Rect/Warp records instead of writing pixels. The

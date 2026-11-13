@@ -18,33 +18,32 @@ bool GlyphDescriptor(const lv_font_t*, lv_font_glyph_dsc_t*, uint32_t, uint32_t)
 
 const void* GlyphBitmap(lv_font_glyph_dsc_t*, lv_draw_buf_t*) { return nullptr; }
 
-const lv_font_t kCandidateSmall{.get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 15};
-const lv_font_t kCandidateMedium{.get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 19};
-const lv_font_t kCandidateLarge{.get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 25};
-const lv_font_t kCandidateTitle{.get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 33};
-const lv_font_t kInvalidFont{.get_glyph_bitmap = GlyphBitmap, .line_height = 15};
+constexpr lv_font_t MakeFont(int32_t line_height, bool valid = true) {
+    lv_font_t font{};
+    font.get_glyph_dsc = valid ? GlyphDescriptor : nullptr;
+    font.get_glyph_bitmap = GlyphBitmap;
+    font.line_height = line_height;
+    return font;
+}
+
+const lv_font_t kCandidateSmall = MakeFont(15);
+const lv_font_t kCandidateMedium = MakeFont(19);
+const lv_font_t kCandidateLarge = MakeFont(25);
+const lv_font_t kCandidateTitle = MakeFont(33);
+const lv_font_t kInvalidFont = MakeFont(15, false);
 
 }  // namespace
 
 extern "C" {
-extern const lv_font_t font_builtin_latin_10{
-    .get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 13};
-extern const lv_font_t font_builtin_latin_12{
-    .get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 16};
-extern const lv_font_t font_builtin_latin_14{
-    .get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 18};
-extern const lv_font_t font_builtin_latin_16{
-    .get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 21};
-extern const lv_font_t font_builtin_latin_18{
-    .get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 23};
-extern const lv_font_t font_builtin_latin_20{
-    .get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 26};
-extern const lv_font_t font_builtin_latin_24{
-    .get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 30};
-extern const lv_font_t font_builtin_latin_26{
-    .get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 33};
-extern const lv_font_t font_builtin_latin_32{
-    .get_glyph_dsc = GlyphDescriptor, .get_glyph_bitmap = GlyphBitmap, .line_height = 39};
+extern const lv_font_t font_builtin_latin_10 = MakeFont(13);
+extern const lv_font_t font_builtin_latin_12 = MakeFont(16);
+extern const lv_font_t font_builtin_latin_14 = MakeFont(18);
+extern const lv_font_t font_builtin_latin_16 = MakeFont(21);
+extern const lv_font_t font_builtin_latin_18 = MakeFont(23);
+extern const lv_font_t font_builtin_latin_20 = MakeFont(26);
+extern const lv_font_t font_builtin_latin_24 = MakeFont(30);
+extern const lv_font_t font_builtin_latin_26 = MakeFont(33);
+extern const lv_font_t font_builtin_latin_32 = MakeFont(39);
 }
 
 bool lv_font_get_glyph_dsc_fmt_txt(const lv_font_t* font, lv_font_glyph_dsc_t* descriptor, uint32_t codepoint,

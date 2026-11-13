@@ -1,5 +1,6 @@
 #include "platform/audio/audio_engine.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -32,6 +33,7 @@ constexpr uint32_t kPcmVoiceCount = kMaxCompressedPlaybacks + kMaxGuestPcmStream
 constexpr uint32_t kAudioTaskStackSize = 4096U;
 constexpr BaseType_t kAudioTaskCore = task_policy::kSystemCore;
 constexpr uint32_t kAudioIdleGraceMs = 10000U;
+constexpr uint32_t kCapturePauseTimeoutMs = 500U;
 
 // The BOX-3 mute GPIO ISR writes only this gate. It must not enter State(),
 // follow board pointers, initialize objects, or touch mixer/PSRAM buffers.
@@ -59,7 +61,10 @@ struct AudioEngineState final {
     std::atomic<EngineState> engine_state{EngineState::kStopped};
     std::atomic<bool> suspended{};
     std::atomic<bool> app_foreground{};
+    std::atomic<void*> capture_pause_owner{};
+    std::atomic<void*> capture_pause_acknowledged{};
     std::atomic<uint16_t> master_volume_per_ten_thousand{static_cast<uint16_t>(VolumeOutputPerTenThousand(70U))};
+    std::atomic<uint8_t> master_volume_percent{70U};
     std::atomic<TaskHandle_t> task{};
     SemaphoreHandle_t voices_mutex{};
     SynthVoice voices[kMaxVoices]{};
@@ -132,7 +137,11 @@ bool AppKeepsOutputActive() {
     return State().app_foreground.load(std::memory_order_acquire) && !State().suspended.load(std::memory_order_acquire);
 }
 
-bool HasOutputDemand() { return ShouldRunAudioOutput(AppKeepsOutputActive(), HasPlayableVoice()); }
+void* CapturePauseOwner() { return State().capture_pause_owner.load(std::memory_order_acquire); }
+
+bool HasOutputDemand() {
+    return CapturePauseOwner() == nullptr && ShouldRunAudioOutput(AppKeepsOutputActive(), HasPlayableVoice());
+}
 
 AudioChunkState FillAudioChunk(AudioTaskBuffers& buffers) {
     std::memset(buffers.output_frames, 0, sizeof(buffers.output_frames));
@@ -251,6 +260,10 @@ void AudioTask(void* argument) {
     bool first_output_transition = true;
     while (status == ESP_OK) {
         (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (void* owner = CapturePauseOwner(); owner != nullptr) {
+            State().capture_pause_acknowledged.store(owner, std::memory_order_release);
+            continue;
+        }
         if (!HasOutputDemand()) {
             continue;
         }
@@ -268,12 +281,31 @@ void AudioTask(void* argument) {
                 break;
             }
         }
+        if (void* owner = CapturePauseOwner(); owner != nullptr) {
+            State().capture_pause_acknowledged.store(owner, std::memory_order_release);
+            continue;
+        }
         status = sink.Start(buffers->output_frames, kFramesPerChunk);
         if (status == ESP_OK && first_output_transition) {
             ESP_LOGI(kTag, "audio output started for foreground App");
         }
         uint32_t idle_chunks = 0U;
         while (status == ESP_OK) {
+            void* capture_owner = CapturePauseOwner();
+            if (capture_owner != nullptr) {
+                if (power_controller != nullptr) {
+                    sink.Shutdown();
+                    sink_initialized = false;
+                    status = power_controller->PowerOffAudio();
+                } else {
+                    status = sink.Stop();
+                }
+                if (status == ESP_OK) {
+                    State().capture_pause_acknowledged.store(capture_owner, std::memory_order_release);
+                    ESP_LOGI(kTag, "audio output paused for exclusive capture");
+                }
+                break;
+            }
             const AudioChunkState chunk = FillAudioChunk(*buffers);
             status = sink.Write(buffers->output_frames, kFramesPerChunk);
             if (status != ESP_OK) {
@@ -335,6 +367,8 @@ esp_err_t AudioEngine::Initialize(AudioOutputPeripheral& sink, uint32_t sample_r
     State().sink = &sink;
     State().power_controller = power_controller;
     State().sample_rate = sample_rate;
+    State().capture_pause_owner.store(nullptr, std::memory_order_release);
+    State().capture_pause_acknowledged.store(nullptr, std::memory_order_release);
     AudioMixer::InitializeSineTable(State().sine_table);
     State().engine_state.store(EngineState::kInitializing, std::memory_order_release);
     TaskHandle_t task = nullptr;
@@ -358,8 +392,24 @@ esp_err_t AudioEngine::Initialize(AudioOutputPeripheral& sink, uint32_t sample_r
 }
 
 void AudioEngine::SetMasterVolumePercent(uint8_t percent) {
+    percent = std::min<uint8_t>(percent, 100U);
+    State().master_volume_percent.store(percent, std::memory_order_relaxed);
     const uint16_t perceptual_output = VolumeOutputPerTenThousand(percent);
     State().master_volume_per_ten_thousand.store(perceptual_output, std::memory_order_relaxed);
+}
+
+int32_t AudioEngine::AdjustMasterVolumePercent(int8_t delta, uint8_t& percent_out) {
+    uint8_t current = State().master_volume_percent.load(std::memory_order_relaxed);
+    for (;;) {
+        const int adjusted = std::clamp<int>(static_cast<int>(current) + delta, 10, 100);
+        const uint8_t next = static_cast<uint8_t>(adjusted);
+        if (State().master_volume_percent.compare_exchange_weak(current, next, std::memory_order_relaxed,
+                                                                std::memory_order_relaxed)) {
+            State().master_volume_per_ten_thousand.store(VolumeOutputPerTenThousand(next), std::memory_order_relaxed);
+            percent_out = next;
+            return MICROPIXEL_STATUS_OK;
+        }
+    }
 }
 
 void AudioEngine::SetHardwareMuted(bool muted) { hardware_muted.store(muted, std::memory_order_relaxed); }
@@ -565,6 +615,37 @@ int32_t AudioEngine::StopAll() {
     (void)xSemaphoreGive(State().voices_mutex);
     NotifyAudioTask();
     return MICROPIXEL_STATUS_OK;
+}
+
+int32_t AudioEngine::PauseOutputForCapture(void* owner) {
+    if (owner == nullptr) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+    if (State().engine_state.load(std::memory_order_acquire) != EngineState::kReady) {
+        return MICROPIXEL_STATUS_WOULD_BLOCK;
+    }
+    void* expected = nullptr;
+    if (!State().capture_pause_owner.compare_exchange_strong(expected, owner, std::memory_order_acq_rel)) {
+        if (expected != owner) return MICROPIXEL_STATUS_WOULD_BLOCK;
+    }
+    NotifyAudioTask();
+    for (uint32_t waited = 0U; waited < kCapturePauseTimeoutMs; ++waited) {
+        if (State().capture_pause_acknowledged.load(std::memory_order_acquire) == owner) {
+            return MICROPIXEL_STATUS_OK;
+        }
+        if (State().engine_state.load(std::memory_order_acquire) != EngineState::kReady) break;
+        vTaskDelay(pdMS_TO_TICKS(1U));
+    }
+    expected = owner;
+    (void)State().capture_pause_owner.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+    NotifyAudioTask();
+    return MICROPIXEL_STATUS_TIMEOUT;
+}
+
+void AudioEngine::ResumeOutputAfterCapture(void* owner) {
+    if (owner == nullptr) return;
+    void* expected = owner;
+    if (!State().capture_pause_owner.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) return;
+    State().capture_pause_acknowledged.store(nullptr, std::memory_order_release);
+    NotifyAudioTask();
 }
 
 int32_t AudioEngine::SuspendAll() {

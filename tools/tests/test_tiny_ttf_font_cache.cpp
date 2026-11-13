@@ -51,7 +51,14 @@ lv_font_t Source() {
             .release_glyph = Release,
             .line_height = 20,
             .base_line = 3,
-            .kerning = LV_FONT_KERNING_NORMAL};
+            .subpx = 0,
+            .kerning = LV_FONT_KERNING_NORMAL,
+            .static_bitmap = 0,
+            .underline_position = 0,
+            .underline_thickness = 0,
+            .dsc = nullptr,
+            .fallback = nullptr,
+            .user_data = nullptr};
 }
 lv_font_glyph_dsc_t Lookup(const lv_font_t* font, uint32_t cp, uint32_t next) {
     lv_font_glyph_dsc_t glyph{};

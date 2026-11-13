@@ -26,7 +26,7 @@ I2sAudio::I2sAudio()
               .dma_descriptor_count = 6U,
               .dma_frame_count = 240U,
               .output_channels = 1U,
-              .input_gain_db = 24.0F,
+              .input_gain_db = 30.0F,
               .amplifier_active_low = false,
               .probe_before_attach = true,
               .probe_input_on_initialize = true,

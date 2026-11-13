@@ -23,11 +23,22 @@ DirectSurfaceService::~DirectSurfaceService() { Shutdown(); }
 
 bool DirectSurfaceService::AllocateHostBuffers(uint32_t width, uint32_t height, uint32_t count) {
     const uint64_t pitch = static_cast<uint64_t>(width) * kBytesPerRgb565;
+    // Reject a geometry whose byte count does not fit in 32 bits before the
+    // multiplication can wrap in 64 bits; 32-bit width/height near their
+    // limits multiply past UINT64_MAX.
+    if (height != 0U && pitch > UINT32_MAX / height) {
+        return false;
+    }
     const uint64_t bytes = pitch * height;
     if (bytes == 0U || bytes > UINT32_MAX) {
         return false;
     }
     for (uint32_t index = 0U; index < count; ++index) {
+        // Host-owned frames are Host display work: the Guest PSRAM reserve
+        // (CONFIG_MICROPIXEL_GUEST_PSRAM_RESERVE_BYTES) is held for exactly
+        // this, so they draw on the whole PSRAM heap instead of passing the
+        // Guest admission helpers in runtime/memory/guest_psram.hpp. A failed
+        // allocation makes Create() return RESOURCE_EXHAUSTED, never abort.
         // Same placement and alignment as a Guest buffer would have (PSRAM,
         // 64 B) so the presenter's DMA and cache handling stay identical.
         host_pixels_[index] = static_cast<uint8_t*>(heap_caps_aligned_alloc(
@@ -124,6 +135,9 @@ int32_t DirectSurfaceService::HostBuffer(micropixel_surface_handle_t surface_han
         index >= buffer_count_) {
         return MICROPIXEL_STATUS_NOT_FOUND;
     }
+    if (retiring_.load(std::memory_order_acquire)) {
+        return MICROPIXEL_STATUS_STALE_STATE;
+    }
     if ((in_flight_mask_.load(std::memory_order_acquire) & (1U << index)) != 0U) {
         return MICROPIXEL_STATUS_STALE_STATE;
     }
@@ -137,6 +151,9 @@ ServiceResult<void> DirectSurfaceService::Present(const micropixel_surface_prese
     }
     if (!created_.load(std::memory_order_acquire) || request.surface_handle != handle_) {
         return FailService<void>(MICROPIXEL_STATUS_NOT_FOUND);
+    }
+    if (retiring_.load(std::memory_order_acquire)) {
+        return FailService<void>(MICROPIXEL_STATUS_STALE_STATE);
     }
     if (request.buffer_index >= buffer_count_ || request.source_width == 0U || request.source_height == 0U ||
         (request.pitch % kBytesPerRgb565) != 0U ||
@@ -201,6 +218,13 @@ ServiceResult<void> DirectSurfaceService::Destroy(micropixel_surface_handle_t su
     // release of every buffer, so no RELEASED events are posted meanwhile.
     retiring_.store(true, std::memory_order_release);
     auto result = graphics_.DestroyDirectSurface();
+    if (!result) {
+        // The presenter can time out while a frame or DMA transfer is still
+        // reading these pixels. Keep the service, callback and Host buffers
+        // alive in a sticky retiring state; Shutdown or a repeated DESTROY
+        // will retry the drain.
+        return FailService<void>(result.error().status);
+    }
     created_.store(false, std::memory_order_release);
     in_flight_mask_.store(0U, std::memory_order_release);
     handle_ = 0U;
@@ -212,14 +236,25 @@ ServiceResult<void> DirectSurfaceService::Destroy(micropixel_surface_handle_t su
 // Always forwarded: the device may be scanning the composited App Surface out
 // through the same presenter without any Direct Surface existing, and that
 // path has to hand the panel back to the Host UI on pause as well.
-void DirectSurfaceService::Suspend() { graphics_.SuspendDirectSurface(); }
+ServiceResult<void> DirectSurfaceService::Suspend() {
+    auto result = graphics_.SuspendDirectSurface();
+    return result ? ServiceResult<void>{} : FailService<void>(result.error().status);
+}
 
 void DirectSurfaceService::Resume() { graphics_.ResumeDirectSurface(); }
 
 void DirectSurfaceService::Shutdown() {
     if (created_.load(std::memory_order_acquire)) {
         retiring_.store(true, std::memory_order_release);
-        (void)graphics_.DestroyDirectSurface();
+        auto result = graphics_.DestroyDirectSurface();
+        while (!result && result.error().status == MICROPIXEL_STATUS_TIMEOUT) {
+            ESP_LOGW(kTag, "Direct Surface teardown drain timed out; retrying before buffer release");
+            result = graphics_.DestroyDirectSurface();
+        }
+        if (!result) {
+            ESP_LOGE(kTag, "Direct Surface teardown drain failed: status=%" PRId32, result.error().status);
+            return;
+        }
         created_.store(false, std::memory_order_release);
         in_flight_mask_.store(0U, std::memory_order_release);
         handle_ = 0U;

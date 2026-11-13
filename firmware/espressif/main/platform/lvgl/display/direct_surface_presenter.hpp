@@ -156,7 +156,7 @@ class DirectSurfacePresenter final {
     // presented afterwards are dropped (and released) until Resume(): the Guest
     // keeps running until its WaitEvent safe point, and a frame from that window
     // must never take the panel back from the Host UI.
-    void Suspend();
+    [[nodiscard]] int32_t Suspend();
     void Resume();
     [[nodiscard]] int32_t Destroy();
     [[nodiscard]] bool Created() const { return created_.load(std::memory_order_acquire); }
@@ -226,25 +226,26 @@ class DirectSurfacePresenter final {
     // Screenshot support: copies the Direct Surface frame currently on the
     // panel into `destination` (canonical RGB565, panel size, nearest
     // upscale when the surface is smaller), run on the presenter task so the
-    // front buffer cannot be released or replaced mid-copy. False when the
-    // presenter is not scanning a Direct Surface out, or the copy timed out.
+    // front buffer cannot be released or replaced mid-copy.
+    //
+    // Ownership: the presenter never writes caller memory. The work job only
+    // fills the presenter-owned panel-size staging; this call copies the
+    // staging out after that job completed. A timed-out job may still fill the
+    // staging, so `destination` may be freed as soon as this returns false.
+    // False when the presenter is not scanning a Direct Surface out, the
+    // staging could not be allocated, or the copy timed out.
     [[nodiscard]] bool CaptureFront(uint8_t* destination, uint32_t destination_stride, uint32_t destination_width,
                                     uint32_t destination_height);
 
    private:
     enum class JobKind : uint8_t { kPresent, kYield, kBarrier, kAppSurfaceFrame, kOverlayRefresh, kCaptureFront };
-    struct FrontCapture final {
-        uint8_t* destination{};
-        uint32_t stride{};
-        uint32_t width{};
-        uint32_t height{};
-        bool captured{};
-    };
+    // Control jobs carry no caller pointers: a control job can outlive the
+    // caller's wait and must never touch memory the caller may already have
+    // freed (see CaptureFront).
     struct Job final {
         JobKind kind{};
         device::DirectSurfacePresentation frame{};
-        SemaphoreHandle_t done{};
-        FrontCapture* capture{};
+        uint32_t control_id{};
     };
     static constexpr UBaseType_t kQueueDepth = 8U;
     static constexpr uint32_t kTaskStackBytes = 6 * 1024U;
@@ -292,8 +293,9 @@ class DirectSurfacePresenter final {
     // LVGL task: an overlay changed while App Surface frames are on the panel, so the
     // rows under it have to be sent again even without Guest damage.
     void RequestOverlayRefresh();
-    bool PostControl(JobKind kind, FrontCapture* capture = nullptr);
-    void HandleCaptureFront(FrontCapture& capture) const;
+    bool PostControl(JobKind kind);
+    void HandleCaptureFront();
+    [[nodiscard]] bool EnsureCaptureStaging();
     [[nodiscard]] bool EnterExclusive();
     void LeaveExclusive(bool composite_front);
     [[nodiscard]] bool ScanoutBlit(const device::DirectSurfacePresentation& frame, bool source_byte_swapped);
@@ -378,15 +380,34 @@ class DirectSurfacePresenter final {
     SemaphoreHandle_t control_done_{};
     StaticSemaphore_t control_mutex_storage_{};
     SemaphoreHandle_t control_mutex_{};
+    // Serializes whole CaptureFront calls (post, presenter fill, copy out) so
+    // the staging cannot be refilled while a caller reads it.
+    StaticSemaphore_t capture_mutex_storage_{};
+    SemaphoreHandle_t capture_mutex_{};
+    // Panel-size canonical RGB565, presenter-owned and reused by every
+    // screenshot; freed in Shutdown. It must outlive a timed-out capture job,
+    // which is why the caller's destination cannot serve as the copy target.
+    uint8_t* capture_staging_{};
+    // Written by the presenter task before the job's completion is signalled.
+    std::atomic<bool> capture_filled_{false};
     StaticSemaphore_t stopped_storage_{};
     SemaphoreHandle_t stopped_{};
     portMUX_TYPE lock_ = portMUX_INITIALIZER_UNLOCKED;
+    // Control callers are serialized by control_mutex_. Each queued control
+    // gets its own identity so a completion left by a timed-out predecessor
+    // cannot satisfy the next caller's wait.
+    uint32_t next_control_id_{1U};
+    std::atomic<uint32_t> completed_control_id_{0U};
 
     // Surface state (Guest task writes under lock_, presenter reads).
     device::DirectSurfaceConfig config_{};
     device::DirectSurfaceReleaseSink release_{};
     uint8_t owned_mask_{};  // buffers queued, in flight or held as front
     std::atomic<bool> created_{false};
+    // Set before Destroy queues its barrier and kept set when that barrier
+    // times out. The release sink and buffer ownership remain valid until a
+    // later Destroy retry reaches the drained state.
+    std::atomic<bool> retiring_{false};
     std::atomic<bool> exclusive_{false};
     std::atomic<bool> host_ui_visible_{true};
     std::atomic<bool> stop_requested_{false};

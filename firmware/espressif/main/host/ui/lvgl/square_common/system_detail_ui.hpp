@@ -91,6 +91,7 @@ class SystemDetailUi final {
     static void PowerManagementBackEvent(lv_event_t* event);
     static void PowerManagementSwitchEvent(lv_event_t* event);
     static void PowerManagementTimeoutEvent(lv_event_t* event);
+    static void DisplaySleepTimeoutEvent(lv_event_t* event);
     static void AppearanceBackEvent(lv_event_t* event);
     static void AppearanceThemeEvent(lv_event_t* event);
     static void RemoteControlBackEvent(lv_event_t* event);
@@ -147,6 +148,7 @@ class SystemDetailUi final {
     void* action_context_{};
     lv_obj_t* power_switch_{};
     lv_obj_t* power_timeout_{};
+    lv_obj_t* display_sleep_timeout_{};
     std::array<lv_obj_t*, 3> appearance_options_{};
     lv_obj_t* remote_control_scroll_{};
     int32_t remote_control_scroll_offset_{};

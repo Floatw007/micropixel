@@ -74,7 +74,7 @@ class GuestGraphicsEngine final {
                                               const device::DirectSurfaceReleaseSink& sink,
                                               device::DirectSurfaceInfo& info_out);
     [[nodiscard]] int32_t PresentDirectSurface(const device::DirectSurfacePresentation& presentation);
-    void SuspendDirectSurface();
+    [[nodiscard]] int32_t SuspendDirectSurface();
     void ResumeDirectSurface();
     [[nodiscard]] int32_t DestroyDirectSurface();
 
@@ -102,7 +102,9 @@ class GuestGraphicsEngine final {
     [[nodiscard]] bool DirectlyScannedAppSurface(graphics::ConstPixelSurface& surface_out) const;
     // Same purpose for a Direct Surface (Host or Guest buffers) the presenter
     // scans out: copies the frame on the panel into `destination` as
-    // canonical RGB565 at panel size. False when LVGL owns the panel.
+    // canonical RGB565 at panel size. False when LVGL owns the panel. The
+    // presenter copies through its own staging, so `destination` may be freed
+    // immediately even when this returns false.
     [[nodiscard]] bool CaptureDirectSurfaceFront(uint8_t* destination, uint32_t destination_stride,
                                                  uint32_t destination_width, uint32_t destination_height) {
         return direct_surface_presenter_.CaptureFront(destination, destination_stride, destination_width,

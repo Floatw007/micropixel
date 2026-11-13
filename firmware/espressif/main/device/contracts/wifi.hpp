@@ -90,6 +90,13 @@ class Wifi {
     [[nodiscard]] virtual std::expected<void, WifiError> Connect(std::string_view ssid, std::string_view password) = 0;
     [[nodiscard]] virtual std::expected<void, WifiError> Disconnect() = 0;
     [[nodiscard]] virtual std::expected<void, WifiError> Forget(std::string_view ssid) = 0;
+    // Temporarily favor interactive network latency over radio power saving.
+    // Platforms without a controllable Wi-Fi power policy may keep the
+    // default no-op implementation.
+    [[nodiscard]] virtual std::expected<void, WifiError> SetRealtimeMode(bool enabled) {
+        (void)enabled;
+        return {};
+    }
 
    protected:
     Wifi() = default;

@@ -25,6 +25,7 @@ enum class HallStatus {
 constexpr uint32_t kMaxHallApps = 50U;
 constexpr uint8_t kMinimumBrightnessPercent = 0U;
 constexpr uint8_t kDefaultAutoSleepTimeoutMinutes = 5U;
+constexpr uint8_t kDefaultDisplaySleepTimeoutMinutes = 2U;
 constexpr uint32_t kMaxWifiSsidLength = 32U;
 constexpr uint32_t kMinWifiPasswordLength = 8U;
 constexpr uint32_t kMaxWifiPasswordLength = 64U;
@@ -223,6 +224,7 @@ struct StatusLayerModel final {
     uint8_t brightness_percent{80U};
     uint8_t volume_percent{70U};
     uint8_t auto_sleep_timeout_minutes{kDefaultAutoSleepTimeoutMinutes};
+    uint8_t display_sleep_timeout_minutes{kDefaultDisplaySleepTimeoutMinutes};
     SystemThemeMode theme_mode{SystemThemeMode::kPureBlack};
     bool wifi_available{};
     bool wifi_enabled{};
@@ -290,10 +292,12 @@ struct SystemMenuModel final {
     bool cellular_connected{};
     bool cellular_connecting{};
     device::IdlePowerAction idle_power_action{device::IdlePowerAction::kSleep};
+    bool display_sleep_available{};
     const char* locale{"en"};
     const char* language{"English"};
     uint32_t installed_app_count{};
     uint8_t auto_sleep_timeout_minutes{kDefaultAutoSleepTimeoutMinutes};
+    uint8_t display_sleep_timeout_minutes{kDefaultDisplaySleepTimeoutMinutes};
     SystemThemeMode theme_mode{SystemThemeMode::kPureBlack};
     bool wifi_available{};
     bool wifi_enabled{};
@@ -309,6 +313,8 @@ struct SystemMenuModel final {
 
 struct PowerManagementModel final {
     uint8_t auto_sleep_timeout_minutes{kDefaultAutoSleepTimeoutMinutes};
+    uint8_t display_sleep_timeout_minutes{kDefaultDisplaySleepTimeoutMinutes};
+    bool display_sleep_available{};
     device::IdlePowerAction idle_power_action{device::IdlePowerAction::kSleep};
 };
 
@@ -516,6 +522,7 @@ enum class SystemUiActionType {
     kClosePowerManagement,
     kSetAutoSleepEnabled,
     kSetAutoSleepTimeout,
+    kSetDisplaySleepTimeout,
     kCloseAppearance,
     kSetThemeMode,
     kCloseRemoteControl,
@@ -620,6 +627,8 @@ class SystemUi {
                                                                                  void* action_context) = 0;
     virtual void UpdatePowerManagement(const PowerManagementModel& model) = 0;
     virtual void LeavePowerManagement() = 0;
+    [[nodiscard]] virtual bool SupportsDisplaySleepTimeout() const { return false; }
+    virtual void SetDisplaySleepTimeout(uint8_t minutes) { (void)minutes; }
     [[nodiscard]] virtual std::expected<void, SystemUiError> ShowAppearance(const AppearanceModel& model,
                                                                             SystemUiActionSink action_sink,
                                                                             void* action_context) {

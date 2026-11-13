@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_lv_adapter.h"
 #include "esp_timer.h"
+#include "runtime/wamr/diagnostics.h"
 #include "sdkconfig.h"
 #include "work/task_policy.hpp"
 
@@ -15,8 +16,6 @@ namespace {
 constexpr char kTag[] = "function_ev_display";
 constexpr uint32_t kTaskStackBytes = 4096U;
 constexpr uint32_t kResumeRetryDelayMs = 1000U;
-constexpr int64_t kIdleTimeoutUs = static_cast<int64_t>(CONFIG_MICROPIXEL_FUNCTION_EV_DISPLAY_IDLE_TIMEOUT_MS) * 1000;
-
 }  // namespace
 
 esp_err_t FunctionEvDisplayIdleController::Start(lv_display_t* display, input::EspLcdTouchInput& touch_input) {
@@ -60,6 +59,13 @@ void FunctionEvDisplayIdleController::RecordForegroundActivity() {
     }
 }
 
+void FunctionEvDisplayIdleController::SetIdleTimeoutMinutes(uint8_t minutes) {
+    if (minutes != 1U && minutes != 2U && minutes != 5U && minutes != 10U) return;
+    idle_timeout_us_.store(static_cast<int64_t>(minutes) * 60'000'000, std::memory_order_release);
+    if (task_ != nullptr) xTaskNotifyGive(task_);
+    ESP_LOGI(kTag, "MIPI-DPI idle suspend timeout set to %u min", static_cast<unsigned>(minutes));
+}
+
 bool FunctionEvDisplayIdleController::EnsureAwake(TickType_t timeout_ticks) {
     RecordForegroundActivity();
     const TickType_t started = xTaskGetTickCount();
@@ -91,31 +97,38 @@ bool FunctionEvDisplayIdleController::TouchGate(void* context, const device::Tou
 }
 
 bool FunctionEvDisplayIdleController::IdleDeadlineReached() const {
-    return esp_timer_get_time() - last_activity_us_.load(std::memory_order_acquire) >= kIdleTimeoutUs;
+    return esp_timer_get_time() - last_activity_us_.load(std::memory_order_acquire) >=
+           idle_timeout_us_.load(std::memory_order_acquire);
 }
 
 bool FunctionEvDisplayIdleController::RecoverPreparedDisplay(bool rebuild_panel) {
     if (rebuild_panel) {
+        micropixel_check_heap("before MIPI-DPI panel resume");
         const esp_err_t panel_status = pipeline_.Resume();
         if (panel_status != ESP_OK) {
             ESP_LOGE(kTag, "MIPI-DPI panel recreation failed: %s", esp_err_to_name(panel_status));
             return false;
         }
+        micropixel_check_heap("after MIPI-DPI panel resume");
         guest_graphics_.RebindFramebuffers(pipeline_.DirectFramebuffers());
     }
     const int64_t resume_started_us = esp_timer_get_time();
+    micropixel_check_heap("before LVGL panel recovery");
     const esp_err_t recover_status = esp_lv_adapter_sleep_recover(display_, pipeline_.Panel(), pipeline_.PanelIo());
     if (recover_status != ESP_OK) {
         ESP_LOGE(kTag, "LVGL panel rebind failed: %s", esp_err_to_name(recover_status));
         return false;
     }
+    micropixel_check_heap("after LVGL panel recovery");
     guest_graphics_.ResumeDirectSurface();
+    micropixel_check_heap("after direct surface resume");
     last_activity_us_.store(esp_timer_get_time(), std::memory_order_release);
     wake_requested_.store(false, std::memory_order_release);
     const esp_err_t refresh_status = esp_lv_adapter_refresh_now(display_);
     if (refresh_status != ESP_OK) {
         ESP_LOGE(kTag, "first refresh after display resume failed: %s", esp_err_to_name(refresh_status));
     }
+    micropixel_check_heap("after first display refresh");
     const esp_err_t brightness_status = pipeline_.RestoreBrightness();
     if (brightness_status != ESP_OK) {
         ESP_LOGE(kTag, "backlight restore failed: %s", esp_err_to_name(brightness_status));
@@ -133,7 +146,14 @@ void FunctionEvDisplayIdleController::AttemptSuspend() {
     // Drain an exclusive Guest scanout before LVGL detaches its panel. If that
     // handoff itself publishes a frame, count it as activity and wait through
     // one more idle interval before deleting the newly synchronized panel.
-    guest_graphics_.SuspendDirectSurface();
+    micropixel_check_heap("before direct surface suspend for display idle");
+    const int32_t surface_suspend_status = guest_graphics_.SuspendDirectSurface();
+    micropixel_check_heap("after direct surface suspend for display idle");
+    if (surface_suspend_status != MICROPIXEL_STATUS_OK) {
+        guest_graphics_.ResumeDirectSurface();
+        ESP_LOGW(kTag, "display idle suspend deferred: Direct Surface status=%" PRId32, surface_suspend_status);
+        return;
+    }
     if (!IdleDeadlineReached()) {
         guest_graphics_.ResumeDirectSurface();
         return;
@@ -147,7 +167,9 @@ void FunctionEvDisplayIdleController::AttemptSuspend() {
         return;
     }
 
+    micropixel_check_heap("before LVGL display detach");
     const esp_err_t prepare_status = esp_lv_adapter_sleep_prepare();
+    micropixel_check_heap("after LVGL display detach");
     if (prepare_status != ESP_OK) {
         ESP_LOGW(kTag, "LVGL display detach skipped: %s", esp_err_to_name(prepare_status));
         state_.store(State::kActive, std::memory_order_release);
@@ -164,6 +186,7 @@ void FunctionEvDisplayIdleController::AttemptSuspend() {
     }
 
     const int64_t suspend_started_us = esp_timer_get_time();
+    micropixel_check_heap("before MIPI-DPI panel suspend");
     const esp_err_t suspend_status = pipeline_.Suspend();
     if (suspend_status != ESP_OK) {
         ESP_LOGE(kTag, "MIPI-DPI shutdown failed: %s", esp_err_to_name(suspend_status));
@@ -174,6 +197,7 @@ void FunctionEvDisplayIdleController::AttemptSuspend() {
         }
         return;
     }
+    micropixel_check_heap("after MIPI-DPI panel suspend");
     touch_input_->SetLowPowerPolling(true);
     state_.store(State::kSuspended, std::memory_order_release);
     ESP_LOGI(kTag, "MIPI-DPI panel detached in %" PRIi64 " ms; dsi_dpi frequency lock released",
@@ -198,8 +222,8 @@ void FunctionEvDisplayIdleController::Run() {
     for (;;) {
         const State state = state_.load(std::memory_order_acquire);
         if (state == State::kActive) {
-            const int64_t remaining_us =
-                kIdleTimeoutUs - (esp_timer_get_time() - last_activity_us_.load(std::memory_order_acquire));
+            const int64_t remaining_us = idle_timeout_us_.load(std::memory_order_acquire) -
+                                         (esp_timer_get_time() - last_activity_us_.load(std::memory_order_acquire));
             if (remaining_us > 0) {
                 const uint64_t wait_ms = (static_cast<uint64_t>(remaining_us) + 999U) / 1000U;
                 (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(std::max<uint64_t>(wait_ms, 1U)));

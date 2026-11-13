@@ -259,6 +259,27 @@ void TestWriteBackpressureAndPassThrough() {
     Require(!audio.active);
 }
 
+void TestCapacityRounding() {
+    FakeAudio audio{};
+    micropixel::device::AudioService audio_service{audio};
+    micropixel::runtime::EventQueue events{};
+    micropixel::runtime::PcmStreamService service{audio_service, events, 0};
+
+    // 300 requested frames round up to the next power of two. The response
+    // reports the rounded capacity and the whole ring is usable, so the size
+    // the Guest sees and the Host allocation agree.
+    auto opened = service.Open(OpenRequest(kMixRate, 1U, 300U, 0U));
+    Require(opened && opened->capacity_frames == 512U);
+    std::vector<int16_t> samples(600U);
+    auto written = service.Write(WriteRequest(opened->stream_handle, 600U, 1200U), samples.data(), 1200U);
+    Require(written && written->accepted_frames == 512U && written->free_frames == 0U);
+    Require(service.Close(opened->stream_handle).has_value());
+
+    // A request below the minimum capacity is clamped up to it as well.
+    opened = service.Open(OpenRequest(kMixRate, 1U, 1U, 0U));
+    Require(opened && opened->capacity_frames == 256U);
+}
+
 void TestUpsampledStereoAndLowWater() {
     FakeAudio audio{};
     micropixel::device::AudioService audio_service{audio};
@@ -321,6 +342,7 @@ int main() {
     TestOpenValidation();
     TestWirePayloadWrites();
     TestWriteBackpressureAndPassThrough();
+    TestCapacityRounding();
     TestUpsampledStereoAndLowWater();
     return 0;
 }

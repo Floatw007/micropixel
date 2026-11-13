@@ -71,6 +71,7 @@ class Message final {
             .rgb888 = 0xffffffU,
             .font_handle = 1U,
             .text_length = static_cast<uint16_t>(text.size()),
+            .reserved0 = 0U,
         };
         const size_t offset = bytes_.size();
         bytes_.resize(offset + size, 0U);
@@ -118,7 +119,8 @@ class Message final {
                                .size = sizeof(micropixel_graphics_scene_node_link_record_t)},
                     .node_id = node,
                     .parent_container_id = 0U,
-                    .sibling_order = static_cast<uint16_t>(node + 10U)});
+                    .sibling_order = static_cast<uint16_t>(node + 10U),
+                    .reserved0 = 0U});
             }
         }
         const micropixel_graphics_scene_header_t header{
@@ -443,6 +445,7 @@ void SpriteBatchInstancesPatchIndependently() {
                             .source_y = 0,
                             .source_width = 2,
                             .source_height = 2,
+                            .rgb888 = 0U,
                             .opacity = 255U,
                             .flags = MICROPIXEL_GRAPHICS_SCENE_INSTANCE_VISIBLE,
                             .reserved0 = 0U};
@@ -491,6 +494,7 @@ void AdaptiveAtlasFarEdgeRoundingIsNormalized() {
         .source_y = 22,
         .source_width = 128,
         .source_height = 22,
+        .rgb888 = 0U,
         .opacity = 255U,
         .flags = MICROPIXEL_GRAPHICS_SCENE_INSTANCE_VISIBLE,
         .reserved0 = 0U,

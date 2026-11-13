@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <span>
 
 #include "abi/micropixel_abi.h"
 #include "device/contracts/audio.hpp"
@@ -17,6 +18,7 @@
 #include "device/contracts/managed_network.hpp"
 #include "device/contracts/random.hpp"
 #include "device/contracts/sensors.hpp"
+#include "device/contracts/voice.hpp"
 
 namespace micropixel::device {
 
@@ -119,7 +121,7 @@ class GraphicsService final {
     [[nodiscard]] DeviceResult<DirectSurfaceInfo> CreateDirectSurface(const DirectSurfaceConfig& config,
                                                                       const DirectSurfaceReleaseSink& sink) const;
     [[nodiscard]] DeviceResult<void> PresentDirectSurface(const DirectSurfacePresentation& presentation) const;
-    void SuspendDirectSurface() const;
+    [[nodiscard]] DeviceResult<void> SuspendDirectSurface() const;
     void ResumeDirectSurface() const;
     [[nodiscard]] DeviceResult<void> DestroyDirectSurface() const;
 
@@ -218,13 +220,35 @@ class ManagedNetworkService final {
     ManagedNetwork& implementation_;
 };
 
+class VoiceService final {
+   public:
+    explicit VoiceService(Voice& implementation) : implementation_(implementation) {}
+
+    [[nodiscard]] DeviceResult<micropixel_voice_info_t> GetInfo() const;
+    [[nodiscard]] DeviceResult<void> StartSession() const;
+    [[nodiscard]] DeviceResult<void> CancelSession() const;
+    [[nodiscard]] DeviceResult<micropixel_voice_state_response_t> GetState() const;
+    [[nodiscard]] DeviceResult<VoiceTextResult> ReadText(uint8_t kind, uint32_t revision, uint32_t offset,
+                                                         std::span<uint8_t> destination) const;
+    [[nodiscard]] DeviceResult<micropixel_voice_preferences_t> GetPreferences() const;
+    [[nodiscard]] DeviceResult<void> SetPreferences(const micropixel_voice_set_preferences_request_t& request) const;
+    [[nodiscard]] DeviceResult<micropixel_voice_diagnostics_t> GetDiagnostics() const;
+    [[nodiscard]] DeviceResult<void> RunDiagnostic(uint8_t kind) const;
+    [[nodiscard]] DeviceResult<void> ClearContext() const;
+    void BindUpdateSink(VoiceUpdateSink sink, void* context) const;
+    void UnbindUpdateSink(void* context) const;
+
+   private:
+    Voice& implementation_;
+};
+
 // Value-owned service façade assembled by FirmwareApp and injected into each
 // Guest runtime session. Concrete Platform objects remain outside Runtime.
 class DeviceServices final {
    public:
     DeviceServices(Graphics& graphics, DisplayInfo display, Input& input, Audio& audio, AudioInput& audio_input,
                    Random& random, DeviceCatalog& devices, Sensors& sensors, Gpio& gpio, Haptics& haptics,
-                   Battery& battery, ManagedNetwork& managed_network)
+                   Battery& battery, ManagedNetwork& managed_network, Voice& voice)
         : graphics_(graphics, display),
           input_(input),
           audio_(audio),
@@ -235,7 +259,8 @@ class DeviceServices final {
           gpio_(gpio),
           haptics_(haptics),
           power_info_(devices, battery),
-          managed_network_(managed_network) {}
+          managed_network_(managed_network),
+          voice_(voice) {}
     DeviceServices(const DeviceServices&) = delete;
     DeviceServices& operator=(const DeviceServices&) = delete;
 
@@ -272,6 +297,7 @@ class DeviceServices final {
     [[nodiscard]] ManagedNetworkService& managed_network() {  // NOLINT(readability-identifier-naming)
         return managed_network_;
     }
+    [[nodiscard]] VoiceService& voice() { return voice_; }  // NOLINT(readability-identifier-naming)
 
    private:
     GraphicsService graphics_;
@@ -285,6 +311,7 @@ class DeviceServices final {
     HapticsService haptics_;
     PowerInfoService power_info_;
     ManagedNetworkService managed_network_;
+    VoiceService voice_;
 };
 
 }  // namespace micropixel::device

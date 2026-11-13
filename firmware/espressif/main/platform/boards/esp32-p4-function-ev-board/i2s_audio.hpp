@@ -1,5 +1,7 @@
 #pragma once
 
+#include <type_traits>
+
 #include "device/contracts/audio_input.hpp"
 #include "driver/i2c_master.h"
 #include "platform/audio/audio_output_peripheral.hpp"
@@ -29,9 +31,22 @@ class I2sAudio final : public audio::AudioOutputPeripheral, public device::Audio
     [[nodiscard]] int32_t Read(int16_t* samples, uint32_t capacity, uint32_t& frames_read) override {
         return codec_.Read(samples, capacity, frames_read);
     }
+    [[nodiscard]] int32_t BeginCapture(void* owner) override { return codec_.BeginCapture(owner); }
+    [[nodiscard]] int32_t ReadCapture(void* owner, int16_t* samples, uint32_t capacity,
+                                      uint32_t& frames_read) override {
+        return codec_.ReadCapture(owner, samples, capacity, frames_read);
+    }
+    void EndCapture(void* owner) override { codec_.EndCapture(owner); }
 
    private:
     audio::Es8311I2sAudioSink codec_;
 };
+
+// A board wrapper that omits one of these overrides silently inherits the
+// one-shot AudioInput fallback and breaks continuous Host capture.
+static_assert(std::is_same_v<decltype(&I2sAudio::BeginCapture), int32_t (I2sAudio::*)(void*)>);
+static_assert(
+    std::is_same_v<decltype(&I2sAudio::ReadCapture), int32_t (I2sAudio::*)(void*, int16_t*, uint32_t, uint32_t&)>);
+static_assert(std::is_same_v<decltype(&I2sAudio::EndCapture), void (I2sAudio::*)(void*)>);
 
 }  // namespace micropixel::platform::esp32_p4_function_ev_board

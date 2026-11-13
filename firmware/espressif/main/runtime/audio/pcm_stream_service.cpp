@@ -80,6 +80,12 @@ ServiceResult<micropixel_audio_pcm_stream_open_response_t> PcmStreamService::Ope
     // Power of two so the monotonic read/write positions keep indexing the
     // ring correctly when they wrap at 2^32 (2^32 mod capacity == 0).
     const uint32_t capacity = std::bit_ceil(std::max(request.capacity_frames, kMinCapacityFrames));
+    // Host work, not Guest memory: the ring draws on the PSRAM reserve kept for
+    // Host audio instead of passing the Guest admission in
+    // runtime/memory/guest_psram.hpp, and the request is capped at
+    // kMaxCapacityFrames (128 KiB). `capacity` is both the allocated frame count
+    // and the value the response reports, so ring indexing and the Guest's view
+    // of the stream agree.
     auto* ring =
         static_cast<int16_t*>(heap_caps_calloc(capacity, sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (ring == nullptr) {

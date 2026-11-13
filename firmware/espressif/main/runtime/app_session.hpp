@@ -11,6 +11,7 @@
 #include "abi/micropixel_abi.h"
 #include "freertos/FreeRTOS.h"
 #include "runtime/bundle/aot_package.hpp"
+#include "runtime/system_action.hpp"
 #include "runtime/wamr/wamr_runtime.hpp"
 
 namespace micropixel::device {
@@ -28,7 +29,6 @@ class GuestLogSink;
 
 enum class AppSessionError {
     kPackageLoad,
-    kLaunchBitmap,
     kModuleLoad,
     kGuestInstantiation,
     kExecEnvironment,
@@ -67,7 +67,8 @@ class AppSession final {
     [[nodiscard]] static std::expected<AppSession, AppSessionFailure> Create(
         device::DeviceServices& devices, work::BackgroundExecutor& background_executor,
         const micropixel_bundle_source_t& source, std::string_view effective_locale,
-        const micropixel_system_launch_arguments_response_t& launch_arguments, GuestLogSink* log_sink = nullptr);
+        const micropixel_system_launch_arguments_response_t& launch_arguments, OpenSettingsSink open_settings,
+        void* open_settings_context, GuestLogSink* log_sink = nullptr);
     [[nodiscard]] std::expected<void, AppSessionFailure> Run();
     [[nodiscard]] bool Suspend(TickType_t timeout);
     [[nodiscard]] bool Resume();

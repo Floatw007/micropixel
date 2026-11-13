@@ -25,10 +25,13 @@ void CopyAppId(const char* source, std::array<char, MICROPIXEL_BUNDLE_APP_ID_MAX
 }  // namespace
 
 AppRuntime::AppRuntime(device::DeviceServices& devices, work::BackgroundExecutor& background_executor, WamrRuntime wamr,
-                       SemaphoreHandle_t session_mutex, std::string_view effective_locale, GuestLogSink* log_sink)
+                       SemaphoreHandle_t session_mutex, std::string_view effective_locale,
+                       OpenSettingsSink open_settings, void* open_settings_context, GuestLogSink* log_sink)
     : devices_(devices),
       background_executor_(background_executor),
       log_sink_(log_sink),
+      open_settings_(open_settings),
+      open_settings_context_(open_settings_context),
       wamr_(std::move(wamr)),
       session_mutex_(session_mutex) {
     if (effective_locale.empty() || effective_locale.size() > MICROPIXEL_LOCALE_TAG_MAX_BYTES) {
@@ -41,6 +44,8 @@ AppRuntime::AppRuntime(AppRuntime&& other) noexcept
     : devices_(other.devices_),
       background_executor_(other.background_executor_),
       log_sink_(other.log_sink_),
+      open_settings_(other.open_settings_),
+      open_settings_context_(other.open_settings_context_),
       wamr_(std::move(other.wamr_)),
       session_mutex_(std::exchange(other.session_mutex_, nullptr)),
       active_session_(std::exchange(other.active_session_, nullptr)),
@@ -68,7 +73,8 @@ void AppRuntime::GiveSessionLock() {
 std::expected<AppRuntime, AppRuntimeError> AppRuntime::Initialize(device::DeviceServices& devices,
                                                                   work::BackgroundExecutor& background_executor,
                                                                   std::string_view effective_locale,
-                                                                  GuestLogSink* log_sink) {
+                                                                  OpenSettingsSink open_settings,
+                                                                  void* open_settings_context, GuestLogSink* log_sink) {
     auto runtime_result = WamrRuntime::Initialize();
     if (!runtime_result) {
         ESP_LOGE(kTag, "%s", runtime_result.error().message.data());
@@ -92,7 +98,8 @@ std::expected<AppRuntime, AppRuntimeError> AppRuntime::Initialize(device::Device
         return std::unexpected(AppRuntimeError::kSynchronization);
     }
     ESP_LOGI(kTag, "process-wide WAMR runtime ready");
-    return AppRuntime(devices, background_executor, std::move(wamr), session_mutex, effective_locale, log_sink);
+    return AppRuntime(devices, background_executor, std::move(wamr), session_mutex, effective_locale, open_settings,
+                      open_settings_context, log_sink);
 }
 
 bool AppRuntime::SetEffectiveLocale(std::string_view effective_locale) {
@@ -148,7 +155,7 @@ AppRunOutcome AppRuntime::RunApp(const InstalledApp& app,
 
     micropixel_log_heap_state("AppSession create begin");
     auto session_result = AppSession::Create(devices_, background_executor_, app.source, effective_locale_.data(),
-                                             launch_arguments, log_sink_);
+                                             launch_arguments, open_settings_, open_settings_context_, log_sink_);
     if (!session_result) {
         if (session_result.error().app_id[0] != '\0') {
             outcome.app_id = session_result.error().app_id;

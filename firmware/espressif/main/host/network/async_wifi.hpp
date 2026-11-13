@@ -23,9 +23,20 @@ class AsyncWifi final : public device::Wifi {
     std::expected<void, device::WifiError> Connect(std::string_view ssid, std::string_view password) override;
     std::expected<void, device::WifiError> Disconnect() override;
     std::expected<void, device::WifiError> Forget(std::string_view ssid) override;
+    std::expected<void, device::WifiError> SetRealtimeMode(bool enabled) override;
 
    private:
-    enum class Operation { kNone, kInitialize, kEnable, kScan, kConnectSaved, kConnect, kDisconnect, kForget };
+    enum class Operation {
+        kNone,
+        kInitialize,
+        kEnable,
+        kScan,
+        kConnectSaved,
+        kConnect,
+        kDisconnect,
+        kForget,
+        kRealtime,
+    };
     struct Command {
         Operation operation{};
         bool enabled{};

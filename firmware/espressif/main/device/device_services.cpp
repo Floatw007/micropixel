@@ -255,7 +255,9 @@ DeviceResult<void> GraphicsService::PresentDirectSurface(const DirectSurfacePres
     return StatusResult(implementation_.PresentDirectSurface(presentation));
 }
 
-void GraphicsService::SuspendDirectSurface() const { implementation_.SuspendDirectSurface(); }
+DeviceResult<void> GraphicsService::SuspendDirectSurface() const {
+    return StatusResult(implementation_.SuspendDirectSurface());
+}
 
 void GraphicsService::ResumeDirectSurface() const { implementation_.ResumeDirectSurface(); }
 
@@ -348,6 +350,61 @@ DeviceResult<uint32_t> AudioInputService::Read(int16_t* mono_samples, uint32_t f
     const int32_t status = implementation_.Read(mono_samples, frame_capacity, frames_read);
     return status == MICROPIXEL_STATUS_OK ? DeviceResult<uint32_t>{frames_read} : Fail<uint32_t>(status);
 }
+
+DeviceResult<micropixel_voice_info_t> VoiceService::GetInfo() const {
+    micropixel_voice_info_t info{};
+    const int32_t status = implementation_.GetInfo(info);
+    return status == MICROPIXEL_STATUS_OK ? DeviceResult<micropixel_voice_info_t>{info}
+                                          : Fail<micropixel_voice_info_t>(status);
+}
+
+DeviceResult<void> VoiceService::StartSession() const { return StatusResult(implementation_.StartSession()); }
+
+DeviceResult<void> VoiceService::CancelSession() const { return StatusResult(implementation_.CancelSession()); }
+
+DeviceResult<micropixel_voice_state_response_t> VoiceService::GetState() const {
+    micropixel_voice_state_response_t state{};
+    const int32_t status = implementation_.GetState(state);
+    return status == MICROPIXEL_STATUS_OK ? DeviceResult<micropixel_voice_state_response_t>{state}
+                                          : Fail<micropixel_voice_state_response_t>(status);
+}
+
+DeviceResult<VoiceTextResult> VoiceService::ReadText(uint8_t kind, uint32_t revision, uint32_t offset,
+                                                     std::span<uint8_t> destination) const {
+    VoiceTextResult result{};
+    const int32_t status = implementation_.ReadText(kind, revision, offset, destination, result);
+    return status == MICROPIXEL_STATUS_OK ? DeviceResult<VoiceTextResult>{result} : Fail<VoiceTextResult>(status);
+}
+
+DeviceResult<micropixel_voice_preferences_t> VoiceService::GetPreferences() const {
+    micropixel_voice_preferences_t preferences{};
+    const int32_t status = implementation_.GetPreferences(preferences);
+    return status == MICROPIXEL_STATUS_OK ? DeviceResult<micropixel_voice_preferences_t>{preferences}
+                                          : Fail<micropixel_voice_preferences_t>(status);
+}
+
+DeviceResult<void> VoiceService::SetPreferences(const micropixel_voice_set_preferences_request_t& request) const {
+    return StatusResult(implementation_.SetPreferences(request));
+}
+
+DeviceResult<micropixel_voice_diagnostics_t> VoiceService::GetDiagnostics() const {
+    micropixel_voice_diagnostics_t diagnostics{};
+    const int32_t status = implementation_.GetDiagnostics(diagnostics);
+    return status == MICROPIXEL_STATUS_OK ? DeviceResult<micropixel_voice_diagnostics_t>{diagnostics}
+                                          : Fail<micropixel_voice_diagnostics_t>(status);
+}
+
+DeviceResult<void> VoiceService::RunDiagnostic(uint8_t kind) const {
+    return StatusResult(implementation_.RunDiagnostic(kind));
+}
+
+DeviceResult<void> VoiceService::ClearContext() const { return StatusResult(implementation_.ClearContext()); }
+
+void VoiceService::BindUpdateSink(VoiceUpdateSink sink, void* context) const {
+    implementation_.BindUpdateSink(sink, context);
+}
+
+void VoiceService::UnbindUpdateSink(void* context) const { implementation_.UnbindUpdateSink(context); }
 
 DeviceResult<uint32_t> RandomService::U32() const {
     uint32_t value = 0U;

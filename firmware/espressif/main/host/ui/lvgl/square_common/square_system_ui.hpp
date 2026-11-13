@@ -9,6 +9,15 @@ namespace micropixel::host_ui::lvgl::square_common {
 
 class SquareSystemUi final : public host_ui::SystemUi {
    public:
+    using DisplaySleepSetter = void (*)(void*, uint8_t);
+    void BindDisplaySleepSetter(DisplaySleepSetter setter, void* context) {
+        display_sleep_setter_ = setter;
+        display_sleep_context_ = context;
+    }
+    [[nodiscard]] bool SupportsDisplaySleepTimeout() const override { return display_sleep_setter_ != nullptr; }
+    void SetDisplaySleepTimeout(uint8_t minutes) override {
+        if (display_sleep_setter_ != nullptr) display_sleep_setter_(display_sleep_context_, minutes);
+    }
     void PresentPendingActionSheet() override { state_.action_sheets.Present(); }
     SquareSystemUi(SquareSystemUiState& state, SquarePresentation& presentation);
     ~SquareSystemUi() override;
@@ -93,6 +102,8 @@ class SquareSystemUi final : public host_ui::SystemUi {
     SquareSystemUiState& state_;
     SquarePresentation& presentation_;
     VirtualizedHallPolicy hall_policy_;
+    DisplaySleepSetter display_sleep_setter_{};
+    void* display_sleep_context_{};
 };
 
 }  // namespace micropixel::host_ui::lvgl::square_common

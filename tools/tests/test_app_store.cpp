@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "fake_nvs.hpp"
 #include "psa/crypto.h"
 #include "runtime/bundle/app_store.hpp"
 #include "runtime/bundle/bundle_format.h"
@@ -16,7 +17,6 @@
 #include "runtime/bundlefs/bundle_store.hpp"
 #include "runtime/bundlefs/bundlefs_format.h"
 #include "sdkconfig.h"
-#include "fake_nvs.hpp"
 
 namespace {
 bool fail_next_heap_allocation{};
@@ -240,7 +240,8 @@ class FakeStore final : public micropixel::runtime::BundleStore {
             return BUNDLEFS_ERR_TOO_MANY_FILES;
         }
         writer_active = true;
-        staged = {.name = name};
+        staged = {};
+        staged.name = name;
         staged.data.reserve(size);
         writer_out = {};
         writer_out.opaque[0] = 1U;
@@ -807,11 +808,10 @@ bool micropixel_read_bundle_metadata(const micropixel_bundle_source_t* source,
         header.app_id_length > MICROPIXEL_BUNDLE_APP_ID_MAX_LENGTH) {
         return false;
     }
-    *metadata_out = {
-        .bundle_size = header.bundle_size,
-        .metadata_schema_version = MICROPIXEL_BUNDLE_METADATA_SCHEMA_VERSION,
-        .package_type = MICROPIXEL_BUNDLE_PACKAGE_APP,
-    };
+    *metadata_out = {};
+    metadata_out->bundle_size = header.bundle_size;
+    metadata_out->metadata_schema_version = MICROPIXEL_BUNDLE_METADATA_SCHEMA_VERSION;
+    metadata_out->package_type = MICROPIXEL_BUNDLE_PACKAGE_APP;
     std::memcpy(metadata_out->app_id, header.app_id, header.app_id_length);
     if (std::strncmp(reinterpret_cast<const char*>(metadata_out->app_id), "fonts.", 6U) == 0) {
         metadata_out->package_type = MICROPIXEL_BUNDLE_PACKAGE_COMPONENT;

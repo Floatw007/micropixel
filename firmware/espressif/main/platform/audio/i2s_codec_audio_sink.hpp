@@ -70,6 +70,10 @@ class I2sCodecAudioSink : public AudioOutputPeripheral, public device::AudioInpu
     [[nodiscard]] uint32_t SampleRate() const override { return config_.sample_rate; }
     [[nodiscard]] int32_t GetInfo(micropixel_audio_input_info_t& info) override;
     [[nodiscard]] int32_t Read(int16_t* mono_samples, uint32_t frame_capacity, uint32_t& frames_read) override;
+    [[nodiscard]] int32_t BeginCapture(void* owner) override;
+    [[nodiscard]] int32_t ReadCapture(void* owner, int16_t* mono_samples, uint32_t frame_capacity,
+                                      uint32_t& frames_read) override;
+    void EndCapture(void* owner) override;
 
    protected:
     [[nodiscard]] virtual const audio_codec_if_t* CreateCodec(const audio_codec_ctrl_if_t* control,
@@ -90,6 +94,7 @@ class I2sCodecAudioSink : public AudioOutputPeripheral, public device::AudioInpu
 
     [[nodiscard]] int AmplifierLevel(bool enabled) const;
     [[nodiscard]] esp_err_t SetAmplifier(bool enabled) const;
+    [[nodiscard]] esp_err_t StartMutedOutputClock();
     [[nodiscard]] esp_err_t FailInitialization(esp_err_t status);
     [[nodiscard]] bool HasInput() const { return config_.data_in != GPIO_NUM_NC; }
     [[nodiscard]] bool Lock(TickType_t timeout = portMAX_DELAY) const;
@@ -117,6 +122,10 @@ class I2sCodecAudioSink : public AudioOutputPeripheral, public device::AudioInpu
     mutable StaticSemaphore_t codec_mutex_storage_{};
     mutable SemaphoreHandle_t codec_mutex_{};
     std::atomic<bool> ready_{};
+    std::atomic<void*> capture_owner_{};
+    std::atomic<bool> output_transition_pending_{};
+    bool playback_active_{};
+    bool capture_started_output_clock_{};
 };
 
 }  // namespace micropixel::platform::audio

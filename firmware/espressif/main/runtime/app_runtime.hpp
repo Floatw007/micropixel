@@ -58,7 +58,8 @@ class AppRuntime final {
 
     [[nodiscard]] static std::expected<AppRuntime, AppRuntimeError> Initialize(
         device::DeviceServices& devices, work::BackgroundExecutor& background_executor,
-        std::string_view effective_locale, GuestLogSink* log_sink = nullptr);
+        std::string_view effective_locale, OpenSettingsSink open_settings = nullptr,
+        void* open_settings_context = nullptr, GuestLogSink* log_sink = nullptr);
     [[nodiscard]] bool SetEffectiveLocale(std::string_view effective_locale);
     [[nodiscard]] AppRunOutcome RunApp(const InstalledApp& app,
                                        const micropixel_system_launch_arguments_response_t& launch_arguments,
@@ -70,13 +71,16 @@ class AppRuntime final {
 
    private:
     AppRuntime(device::DeviceServices& devices, work::BackgroundExecutor& background_executor, WamrRuntime wamr,
-               SemaphoreHandle_t session_mutex, std::string_view effective_locale, GuestLogSink* log_sink);
+               SemaphoreHandle_t session_mutex, std::string_view effective_locale, OpenSettingsSink open_settings,
+               void* open_settings_context, GuestLogSink* log_sink);
     [[nodiscard]] bool TakeSessionLock();
     void GiveSessionLock();
 
     device::DeviceServices& devices_;
     work::BackgroundExecutor& background_executor_;
     GuestLogSink* log_sink_{};
+    OpenSettingsSink open_settings_{};
+    void* open_settings_context_{};
     WamrRuntime wamr_;
     SemaphoreHandle_t session_mutex_{};
     AppSession* active_session_{};

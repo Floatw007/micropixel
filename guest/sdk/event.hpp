@@ -6,6 +6,7 @@
 #include "sdk/devices.hpp"
 #include "sdk/geometry.hpp"
 #include "sdk/types.hpp"
+#include "sdk/voice.hpp"
 
 namespace micropixel {
 
@@ -35,6 +36,7 @@ enum class EventType : uint16_t {
     // Input 1.1: analog gamepad axis.
     kAxis,
     kNetworkComplete,
+    kVoice,
 };
 
 enum class TouchPhase : uint8_t {
@@ -351,6 +353,58 @@ class NetworkCompleteEvent final {
     friend class Event;
 };
 
+enum class VoiceEventType : uint8_t {
+    kStateChanged = 1,
+    kInputLevel = 2,
+    kTranscriptUpdated = 3,
+    kResponseUpdated = 4,
+    kSessionEnded = 5,
+    kError = 6,
+    kLocalCommand = 7,
+};
+
+class VoiceEvent final {
+   public:
+    [[nodiscard]] constexpr TimePoint timestamp() const { return timestamp_; }
+    [[nodiscard]] constexpr VoiceEventType event_type() const { return event_type_; }
+    [[nodiscard]] constexpr VoiceTextKind text_kind() const { return text_kind_; }
+    [[nodiscard]] constexpr VoiceState state() const { return state_; }
+    [[nodiscard]] constexpr uint8_t flags() const { return flags_; }
+    [[nodiscard]] constexpr uint32_t revision() const { return revision_; }
+    [[nodiscard]] constexpr uint32_t total_length() const { return total_length_; }
+    [[nodiscard]] constexpr uint16_t input_level_per_mille() const { return input_level_per_mille_; }
+    [[nodiscard]] constexpr VoiceLocalCommand local_command() const { return local_command_; }
+    [[nodiscard]] constexpr int32_t status() const { return status_; }
+
+   private:
+    constexpr VoiceEvent(TimePoint timestamp, VoiceEventType event_type, VoiceTextKind text_kind, VoiceState state,
+                         uint8_t flags, uint32_t revision, uint32_t total_length, uint16_t input_level_per_mille,
+                         VoiceLocalCommand local_command, int32_t status)
+        : timestamp_(timestamp),
+          event_type_(event_type),
+          text_kind_(text_kind),
+          state_(state),
+          flags_(flags),
+          revision_(revision),
+          total_length_(total_length),
+          input_level_per_mille_(input_level_per_mille),
+          local_command_(local_command),
+          status_(status) {}
+
+    TimePoint timestamp_{};
+    VoiceEventType event_type_{VoiceEventType::kStateChanged};
+    VoiceTextKind text_kind_{VoiceTextKind::kTranscript};
+    VoiceState state_{VoiceState::kIdle};
+    uint8_t flags_{};
+    uint32_t revision_{};
+    uint32_t total_length_{};
+    uint16_t input_level_per_mille_{};
+    VoiceLocalCommand local_command_{VoiceLocalCommand::kSleep};
+    int32_t status_{};
+    friend class Application;
+    friend class Event;
+};
+
 class Event final {
    public:
     constexpr Event() = default;
@@ -380,6 +434,7 @@ class Event final {
     [[nodiscard]] constexpr const DeviceEvent* device() const {
         return type_ == EventType::kDeviceAdded || type_ == EventType::kDeviceRemoved ? &device_ : nullptr;
     }
+    [[nodiscard]] constexpr const VoiceEvent* voice() const { return type_ == EventType::kVoice ? &voice_ : nullptr; }
 
    private:
     [[nodiscard]] constexpr const TimerEvent* timer() const { return type_ == EventType::kTimer ? &timer_ : nullptr; }
@@ -437,6 +492,9 @@ class Event final {
     explicit constexpr Event(NetworkCompleteEvent complete)
         : type_(EventType::kNetworkComplete), timestamp_(complete.timestamp_), network_complete_(complete) {}
 
+    explicit constexpr Event(VoiceEvent voice)
+        : type_(EventType::kVoice), timestamp_(voice.timestamp()), voice_(voice) {}
+
     EventType type_{EventType::kUnknown};
     TimePoint timestamp_{};
     TimerEvent timer_{};
@@ -450,6 +508,16 @@ class Event final {
     SurfaceReleasedEvent surface_released_{};
     PcmStreamEvent pcm_stream_{};
     NetworkCompleteEvent network_complete_{TimePoint{}, 0U, 0, 0U, 0U, 0U, 0U};
+    VoiceEvent voice_{TimePoint{},
+                      VoiceEventType::kStateChanged,
+                      VoiceTextKind::kTranscript,
+                      VoiceState::kIdle,
+                      0U,
+                      0U,
+                      0U,
+                      0U,
+                      VoiceLocalCommand::kSleep,
+                      0};
     bool gamepad_handled_{};
     friend class Application;
 };

@@ -117,7 +117,7 @@ class FakeGraphics final : public micropixel::device::Graphics {
     [[nodiscard]] int32_t PresentDirectSurface(const micropixel::device::DirectSurfacePresentation&) override {
         return MICROPIXEL_STATUS_OK;
     }
-    void SuspendDirectSurface() override {}
+    [[nodiscard]] int32_t SuspendDirectSurface() override { return MICROPIXEL_STATUS_OK; }
     void ResumeDirectSurface() override {}
     [[nodiscard]] int32_t DestroyDirectSurface() override { return MICROPIXEL_STATUS_OK; }
 
@@ -1154,6 +1154,19 @@ void TestServiceUploadsAndDraws() {
             for (uint32_t x = 0U; x < 8U; ++x) entries[y * 8U + x] = (y << 24U) | (y << 12U) | x;
         }
         std::memcpy(g_guest_memory + kStaging + 12288U, entries.data(), entries.size() * sizeof(uint32_t));
+        // 32768 * 4 * 32769 wraps in 32 bits. The upload must be refused before
+        // allocation; otherwise the skip fill writes past the truncated map.
+        micropixel_raster_warp_upload_request_t overflow{};
+        overflow.size = sizeof(overflow);
+        overflow.warp_slot = 6U;
+        overflow.width = 32768U;
+        overflow.height = 32769U;
+        overflow.row_count = 1U;
+        overflow.entries = kStaging;
+        overflow.length = 131072U;
+        const size_t before_overflow = allocation_attempts;
+        Require(service.UploadWarp(overflow).error().status == MICROPIXEL_STATUS_INVALID_ARGUMENT);
+        Require(allocation_attempts == before_overflow);
         micropixel_raster_warp_upload_request_t warp_upload{};
         warp_upload.size = sizeof(warp_upload);
         warp_upload.warp_slot = 2U;

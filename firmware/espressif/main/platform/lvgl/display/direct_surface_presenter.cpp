@@ -124,7 +124,10 @@ esp_err_t DirectSurfacePresenter::Initialize(lv_display_t* display, uint32_t wid
     queue_ = xQueueCreateStatic(kQueueDepth, sizeof(Job), queue_buffer_, &queue_storage_);
     control_done_ = xSemaphoreCreateBinaryStatic(&control_done_storage_);
     control_mutex_ = xSemaphoreCreateMutexStatic(&control_mutex_storage_);
+    capture_mutex_ = xSemaphoreCreateMutexStatic(&capture_mutex_storage_);
     stopped_ = xSemaphoreCreateBinaryStatic(&stopped_storage_);
+    next_control_id_ = 1U;
+    completed_control_id_.store(0U, std::memory_order_release);
     stop_requested_.store(false, std::memory_order_release);
     TaskHandle_t task = nullptr;
 #ifdef CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
@@ -152,7 +155,7 @@ void DirectSurfacePresenter::Shutdown() {
     (void)Destroy();
     ScanoutArbiter::Instance().UnregisterPresenter(this);
     stop_requested_.store(true, std::memory_order_release);
-    Job job{.kind = JobKind::kBarrier, .done = nullptr};
+    Job job{.kind = JobKind::kBarrier};
     (void)xQueueSend(queue_, &job, kControlTimeout);
     (void)xSemaphoreTake(stopped_, kControlTimeout);
 #ifdef CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
@@ -163,6 +166,12 @@ void DirectSurfacePresenter::Shutdown() {
     task_ = nullptr;
     vQueueDelete(queue_);
     queue_ = nullptr;
+    // A caller may still be copying the staging a completed capture job filled.
+    if (capture_mutex_ != nullptr && xSemaphoreTake(capture_mutex_, kControlTimeout) == pdTRUE) {
+        heap_caps_free(capture_staging_);
+        capture_staging_ = nullptr;
+        (void)xSemaphoreGive(capture_mutex_);
+    }
     ReleaseStages();
 #if defined(CONFIG_SOC_PPA_SUPPORTED) && CONFIG_SOC_PPA_SUPPORTED
     framebuffer_copy_.Release();
@@ -197,7 +206,7 @@ int32_t DirectSurfacePresenter::Create(const device::DirectSurfaceConfig& config
         config.flags != 0U) {
         return MICROPIXEL_STATUS_INVALID_ARGUMENT;
     }
-    if (created_.load(std::memory_order_acquire)) {
+    if (created_.load(std::memory_order_acquire) || retiring_.load(std::memory_order_acquire)) {
         return MICROPIXEL_STATUS_RESOURCE_EXHAUSTED;
     }
     taskENTER_CRITICAL(&lock_);
@@ -210,6 +219,7 @@ int32_t DirectSurfacePresenter::Create(const device::DirectSurfaceConfig& config
     suspended_.store(false, std::memory_order_release);
     frames_scanned_out_ = 0U;
     frames_composited_ = 0U;
+    retiring_.store(false, std::memory_order_release);
     created_.store(true, std::memory_order_release);
     FillInfo(info_out);
     ESP_LOGI(kTag, "surface created: %" PRIu32 "x%" PRIu32 " buffers=%" PRIu32, config.width, config.height,
@@ -243,7 +253,7 @@ int32_t DirectSurfacePresenter::Present(const device::DirectSurfacePresentation&
     if (busy) {
         return MICROPIXEL_STATUS_STALE_STATE;
     }
-    Job job{.kind = JobKind::kPresent, .frame = frame, .done = nullptr};
+    Job job{.kind = JobKind::kPresent, .frame = frame};
     if (xQueueSend(queue_, &job, 0) != pdTRUE) {
         taskENTER_CRITICAL(&lock_);
         owned_mask_ &= static_cast<uint8_t>(~bit);
@@ -253,7 +263,7 @@ int32_t DirectSurfacePresenter::Present(const device::DirectSurfacePresentation&
     return MICROPIXEL_STATUS_OK;
 }
 
-bool DirectSurfacePresenter::PostControl(JobKind kind, FrontCapture* capture) {
+bool DirectSurfacePresenter::PostControl(JobKind kind) {
     if (task_ == nullptr) {
         return false;
     }
@@ -264,14 +274,30 @@ bool DirectSurfacePresenter::PostControl(JobKind kind, FrontCapture* capture) {
         return false;
     }
     (void)xSemaphoreTake(control_done_, 0);
-    Job job{.kind = kind, .done = control_done_, .capture = capture};
+    uint32_t control_id = next_control_id_++;
+    if (control_id == 0U) {
+        control_id = next_control_id_++;
+    }
+    Job job{.kind = kind, .control_id = control_id};
     bool completed = false;
     if (xQueueSend(queue_, &job, kControlTimeout) != pdTRUE) {
-        ESP_LOGW(kTag, "control job dropped: queue full");
-    } else if (xSemaphoreTake(control_done_, kControlTimeout) != pdTRUE) {
-        ESP_LOGW(kTag, "control job timed out");
+        ESP_LOGW(kTag, "control job id=%" PRIu32 " dropped: queue full", control_id);
     } else {
-        completed = true;
+        const TickType_t wait_started = xTaskGetTickCount();
+        for (;;) {
+            const TickType_t elapsed = xTaskGetTickCount() - wait_started;
+            if (elapsed >= kControlTimeout || xSemaphoreTake(control_done_, kControlTimeout - elapsed) != pdTRUE) {
+                ESP_LOGW(kTag, "control job id=%" PRIu32 " timed out", control_id);
+                break;
+            }
+            const uint32_t completed_id = completed_control_id_.load(std::memory_order_acquire);
+            if (completed_id == control_id) {
+                completed = true;
+                break;
+            }
+            ESP_LOGD(kTag, "ignored stale control completion id=%" PRIu32 " while waiting for id=%" PRIu32,
+                     completed_id, control_id);
+        }
     }
     (void)xSemaphoreGive(control_mutex_);
     return completed;
@@ -314,7 +340,7 @@ bool DirectSurfacePresenter::PresentAppSurfaceFrame() {
     if (app_surface_frame_queued_.exchange(true, std::memory_order_acq_rel)) {
         return true;
     }
-    Job job{.kind = JobKind::kAppSurfaceFrame, .done = nullptr};
+    Job job{.kind = JobKind::kAppSurfaceFrame};
     if (xQueueSend(queue_, &job, 0) != pdTRUE) {
         app_surface_frame_queued_.store(false, std::memory_order_release);
         return false;
@@ -331,7 +357,7 @@ void DirectSurfacePresenter::RequestOverlayRefresh() {
     if (overlay_refresh_queued_.exchange(true, std::memory_order_acq_rel)) {
         return;
     }
-    Job job{.kind = JobKind::kOverlayRefresh, .done = nullptr};
+    Job job{.kind = JobKind::kOverlayRefresh};
     if (xQueueSend(queue_, &job, 0) != pdTRUE) {
         overlay_refresh_queued_.store(false, std::memory_order_release);
         // Only happens while App Surface frames are streaming, and each of those
@@ -351,9 +377,9 @@ void DirectSurfacePresenter::ReleaseAppSurfaceFrames() {
     }
 }
 
-void DirectSurfacePresenter::Suspend() {
+int32_t DirectSurfacePresenter::Suspend() {
     if (!created_.load(std::memory_order_acquire) && !AppSurfaceFrameScanoutEnabled()) {
-        return;
+        return MICROPIXEL_STATUS_OK;
     }
     // Sticky until Resume(): the barrier below composites the displayed frame,
     // and HandlePresent drops whatever the Guest still presents on its way to
@@ -361,22 +387,30 @@ void DirectSurfacePresenter::Suspend() {
     // UI transition.
     suspended_.store(true, std::memory_order_release);
     composite_next_.store(true, std::memory_order_release);
-    (void)PostControl(JobKind::kBarrier);
+    return PostControl(JobKind::kBarrier) ? MICROPIXEL_STATUS_OK : MICROPIXEL_STATUS_TIMEOUT;
 }
 
 void DirectSurfacePresenter::Resume() { suspended_.store(false, std::memory_order_release); }
 
 int32_t DirectSurfacePresenter::Destroy() {
-    if (!created_.load(std::memory_order_acquire)) {
+    const bool retry = retiring_.load(std::memory_order_acquire);
+    if (!created_.load(std::memory_order_acquire) && !retry) {
         return MICROPIXEL_STATUS_NOT_FOUND;
     }
-    // Refuse new presents first so the barrier really drains everything.
+    // Refuse new presents first so the barrier really drains everything. A
+    // timed-out barrier may still be using Guest pixels, so keep the release
+    // sink and ownership intact and let teardown retry instead of freeing the
+    // buffers underneath the presenter task.
+    retiring_.store(true, std::memory_order_release);
     created_.store(false, std::memory_order_release);
-    (void)PostControl(JobKind::kBarrier);
+    if (!PostControl(JobKind::kBarrier)) {
+        return MICROPIXEL_STATUS_TIMEOUT;
+    }
     taskENTER_CRITICAL(&lock_);
     owned_mask_ = 0U;
     release_ = {};
     taskEXIT_CRITICAL(&lock_);
+    retiring_.store(false, std::memory_order_release);
     ESP_LOGI(kTag, "surface destroyed: scanned-out=%" PRIu32 " composited=%" PRIu32,
              frames_scanned_out_.load(std::memory_order_relaxed), frames_composited_.load(std::memory_order_relaxed));
     return MICROPIXEL_STATUS_OK;
@@ -388,7 +422,7 @@ void DirectSurfacePresenter::SetHostUiVisible(bool visible) {
         // Host UI appeared while the panel belongs to the Guest: hand the panel
         // back even if the Guest stops presenting. Fire-and-forget; the LVGL
         // task must not wait on the presenter.
-        Job job{.kind = JobKind::kYield, .done = nullptr};
+        Job job{.kind = JobKind::kYield};
         if (xQueueSend(queue_, &job, 0) != pdTRUE) {
             ESP_LOGW(kTag, "could not queue Host UI yield: queue full");
         }
@@ -431,13 +465,12 @@ void DirectSurfacePresenter::Run() {
                 HandleOverlayRefresh();
                 break;
             case JobKind::kCaptureFront:
-                if (job.capture != nullptr) {
-                    HandleCaptureFront(*job.capture);
-                }
+                HandleCaptureFront();
                 break;
         }
-        if (job.done != nullptr) {
-            (void)xSemaphoreGive(job.done);
+        if (job.control_id != 0U) {
+            completed_control_id_.store(job.control_id, std::memory_order_release);
+            (void)xSemaphoreGive(control_done_);
         }
         if (stop_requested_.load(std::memory_order_acquire)) {
             break;
@@ -1636,35 +1669,86 @@ bool DirectSurfacePresenter::Composite(const device::DirectSurfacePresentation& 
 bool DirectSurfacePresenter::CaptureFront(uint8_t* destination, uint32_t destination_stride, uint32_t destination_width,
                                           uint32_t destination_height) {
     if (destination == nullptr || destination_width == 0U || destination_height == 0U ||
-        destination_stride < destination_width * 2U || !exclusive_.load(std::memory_order_acquire)) {
+        destination_stride < destination_width * kBytesPerRgb565 || !exclusive_.load(std::memory_order_acquire)) {
         return false;
     }
-    FrontCapture capture{.destination = destination,
-                         .stride = destination_stride,
-                         .width = destination_width,
-                         .height = destination_height};
-    return PostControl(JobKind::kCaptureFront, &capture) && capture.captured;
+    // Held across the post and the copy out: the staging is written by the
+    // presenter task, and a second capture job queued in between would refill
+    // it under this caller.
+    if (capture_mutex_ == nullptr || xSemaphoreTake(capture_mutex_, kControlTimeout) != pdTRUE) {
+        return false;
+    }
+    bool captured = false;
+    if (task_ != nullptr && EnsureCaptureStaging()) {
+        // The handler clears capture_filled_ before it reads the front buffer,
+        // so a value left by an earlier timed-out job cannot satisfy this call.
+        if (PostControl(JobKind::kCaptureFront) && capture_filled_.load(std::memory_order_acquire)) {
+            // Staging is canonical RGB565 at panel size, so this is a plain
+            // row copy for the panel-sized destinations callers use.
+            ConvertRgb565(capture_staging_, width_ * kBytesPerRgb565, width_, height_, false, destination,
+                          destination_stride, destination_width, destination_height, false, false);
+            captured = true;
+        }
+    }
+    (void)xSemaphoreGive(capture_mutex_);
+    return captured;
+}
+
+bool DirectSurfacePresenter::EnsureCaptureStaging() {
+    if (capture_staging_ != nullptr) {
+        return true;
+    }
+    // One panel-sized frame for the presenter's whole lifetime: a capture job
+    // can outlive its caller's wait, so neither the caller's frame nor the
+    // front buffer can be the copy target. Caller holds capture_mutex_.
+    const uint32_t bytes = width_ * height_ * kBytesPerRgb565;
+    const uint32_t allocation = (bytes + kStageAlignment - 1U) / kStageAlignment * kStageAlignment;
+    capture_staging_ = static_cast<uint8_t*>(
+        heap_caps_aligned_alloc(kStageAlignment, allocation, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (capture_staging_ == nullptr) {
+        ESP_LOGE(kTag, "could not allocate %" PRIu32 " B capture staging", allocation);
+        return false;
+    }
+    return true;
 }
 
 // Presenter task: the front buffer is owned by the Host until the next
 // present replaces it, so it can be read here without racing the Guest.
-void DirectSurfacePresenter::HandleCaptureFront(FrontCapture& capture) const {
-    capture.captured = false;
+// Writes only capture_staging_: the caller's destination may already be freed
+// when this job runs after a timeout.
+void DirectSurfacePresenter::HandleCaptureFront() {
+    capture_filled_.store(false, std::memory_order_release);
     if (!has_front_ || !exclusive_.load(std::memory_order_acquire) || front_.pixels == nullptr ||
-        front_.source_width == 0U || front_.source_height == 0U) {
+        front_.source_width == 0U || front_.source_height == 0U || capture_staging_ == nullptr) {
         return;
     }
-    for (uint32_t y = 0; y < capture.height; ++y) {
-        const uint32_t source_y = std::min(y * front_.source_height / capture.height, front_.source_height - 1U);
+    const uint32_t stride = width_ * kBytesPerRgb565;
+    if (front_.source_width == width_ && front_.source_height == height_) {
+        for (uint32_t y = 0U; y < height_; ++y) {
+            const auto* source_row = reinterpret_cast<const uint16_t*>(front_.pixels + y * front_.pitch);
+            auto* row = reinterpret_cast<uint16_t*>(capture_staging_ + y * stride);
+            if (!front_byte_swapped_) {
+                std::memcpy(row, source_row, stride);
+                continue;
+            }
+            for (uint32_t x = 0U; x < width_; ++x) {
+                row[x] = Swap16(source_row[x]);
+            }
+        }
+        capture_filled_.store(true, std::memory_order_release);
+        return;
+    }
+    for (uint32_t y = 0U; y < height_; ++y) {
+        const uint32_t source_y = std::min(y * front_.source_height / height_, front_.source_height - 1U);
         const auto* source_row = reinterpret_cast<const uint16_t*>(front_.pixels + source_y * front_.pitch);
-        auto* row = reinterpret_cast<uint16_t*>(capture.destination + y * capture.stride);
-        for (uint32_t x = 0; x < capture.width; ++x) {
-            const uint32_t source_x = std::min(x * front_.source_width / capture.width, front_.source_width - 1U);
+        auto* row = reinterpret_cast<uint16_t*>(capture_staging_ + y * stride);
+        for (uint32_t x = 0U; x < width_; ++x) {
+            const uint32_t source_x = std::min(x * front_.source_width / width_, front_.source_width - 1U);
             const uint16_t pixel = source_row[source_x];
-            row[x] = front_byte_swapped_ ? static_cast<uint16_t>((pixel >> 8U) | (pixel << 8U)) : pixel;
+            row[x] = front_byte_swapped_ ? Swap16(pixel) : pixel;
         }
     }
-    capture.captured = true;
+    capture_filled_.store(true, std::memory_order_release);
 }
 
 void DirectSurfacePresenter::ReleaseFront() {

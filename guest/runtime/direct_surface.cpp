@@ -79,7 +79,7 @@ namespace {
         return unexpected(ErrorFromStatus(MICROPIXEL_STATUS_INVALID_ARGUMENT));
     }
     if (raw.size < sizeof(raw) || direct_surface_state.handle != 0U) {
-        // Graphics < 1.5 Host, or a surface already exists on this side.
+        // Host without Direct Surface support, or a surface already exists on this side.
         return unexpected(ErrorFromStatus(direct_surface_state.handle != 0U ? MICROPIXEL_STATUS_RESOURCE_EXHAUSTED
                                                                             : MICROPIXEL_STATUS_UNSUPPORTED));
     }

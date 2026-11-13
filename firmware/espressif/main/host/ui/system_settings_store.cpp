@@ -19,7 +19,7 @@ constexpr char kControlNamespace[] = "control";
 constexpr char kSettingsKey[] = "ui";
 constexpr char kLocaleSettingsKey[] = "locale";
 constexpr char kControlSettingsKey[] = "settings";
-constexpr uint8_t kSettingsVersion = 3U;
+constexpr uint8_t kSettingsVersion = 4U;
 constexpr uint8_t kLocaleSettingsVersion = 1U;
 constexpr uint8_t kControlSettingsVersion = 1U;
 constexpr uint8_t kPerformanceOverlayFlag = 1U << 0U;
@@ -31,7 +31,8 @@ struct SettingsRecord final {
     uint8_t flags{};
     uint8_t auto_sleep_timeout_minutes{};
     uint8_t theme_mode{};
-    uint8_t reserved[2]{};
+    uint8_t display_sleep_timeout_minutes{};
+    uint8_t reserved{};
 };
 
 static_assert(sizeof(SettingsRecord) == 8U, "System settings record size changed");
@@ -59,15 +60,21 @@ bool ValidRecord(const SettingsRecord& record) {
         (record.auto_sleep_timeout_minutes != 0U && record.auto_sleep_timeout_minutes != 1U &&
          record.auto_sleep_timeout_minutes != 5U && record.auto_sleep_timeout_minutes != 10U &&
          record.auto_sleep_timeout_minutes != 30U) ||
-        record.theme_mode > static_cast<uint8_t>(SystemThemeMode::kSoftIvory)) {
+        record.theme_mode > static_cast<uint8_t>(SystemThemeMode::kSoftIvory) ||
+        (record.display_sleep_timeout_minutes != 1U && record.display_sleep_timeout_minutes != 2U &&
+         record.display_sleep_timeout_minutes != 5U && record.display_sleep_timeout_minutes != 10U) ||
+        record.reserved != 0U) {
         return false;
     }
-    for (uint8_t byte : record.reserved) {
-        if (byte != 0U) {
-            return false;
-        }
-    }
     return true;
+}
+
+bool ValidVersion3Record(const SettingsRecord& record) {
+    if (record.version != 3U || record.display_sleep_timeout_minutes != 0U || record.reserved != 0U) return false;
+    SettingsRecord upgraded = record;
+    upgraded.version = kSettingsVersion;
+    upgraded.display_sleep_timeout_minutes = kDefaultDisplaySleepTimeoutMinutes;
+    return ValidRecord(upgraded);
 }
 
 bool ValidVersion2Record(const SettingsRecord& record) {
@@ -79,12 +86,7 @@ bool ValidVersion2Record(const SettingsRecord& record) {
         record.theme_mode != 0U) {
         return false;
     }
-    for (uint8_t byte : record.reserved) {
-        if (byte != 0U) {
-            return false;
-        }
-    }
-    return true;
+    return record.display_sleep_timeout_minutes == 0U && record.reserved == 0U;
 }
 
 bool ValidLegacyRecord(const SettingsRecord& record) {
@@ -93,12 +95,7 @@ bool ValidLegacyRecord(const SettingsRecord& record) {
         record.theme_mode != 0U) {
         return false;
     }
-    for (uint8_t byte : record.reserved) {
-        if (byte != 0U) {
-            return false;
-        }
-    }
-    return true;
+    return record.display_sleep_timeout_minutes == 0U && record.reserved == 0U;
 }
 
 bool ValidControlRecord(const ControlSettingsRecord& record) {
@@ -192,7 +189,8 @@ bool SystemSettingsStore::Load(StatusLayerModel& model) const {
     error = nvs_get_blob(handle_, kSettingsKey, &record, &size);
     const bool version1 = ValidLegacyRecord(record);
     const bool version2 = ValidVersion2Record(record);
-    if (error != ESP_OK || size != sizeof(record) || (!version1 && !version2 && !ValidRecord(record))) {
+    const bool version3 = ValidVersion3Record(record);
+    if (error != ESP_OK || size != sizeof(record) || (!version1 && !version2 && !version3 && !ValidRecord(record))) {
         ESP_LOGW(kTag, "ignored invalid Host settings record");
         return false;
     }
@@ -200,6 +198,8 @@ bool SystemSettingsStore::Load(StatusLayerModel& model) const {
     model.volume_percent = record.volume_percent;
     model.performance_overlay_enabled = (record.flags & kPerformanceOverlayFlag) != 0U;
     model.auto_sleep_timeout_minutes = version1 ? kDefaultAutoSleepTimeoutMinutes : record.auto_sleep_timeout_minutes;
+    model.display_sleep_timeout_minutes =
+        version1 || version2 || version3 ? kDefaultDisplaySleepTimeoutMinutes : record.display_sleep_timeout_minutes;
     model.theme_mode =
         version1 || version2 ? SystemThemeMode::kPureBlack : static_cast<SystemThemeMode>(record.theme_mode);
     ESP_LOGI(kTag, "restored Host settings: brightness=%u volume=%u performance=%s auto-sleep=%u min theme=%u",
@@ -219,7 +219,8 @@ bool SystemSettingsStore::Save(const StatusLayerModel& model) const {
         .volume_percent = model.volume_percent,
         .flags = static_cast<uint8_t>(model.performance_overlay_enabled ? kPerformanceOverlayFlag : 0U),
         .auto_sleep_timeout_minutes = model.auto_sleep_timeout_minutes,
-        .theme_mode = static_cast<uint8_t>(model.theme_mode)};
+        .theme_mode = static_cast<uint8_t>(model.theme_mode),
+        .display_sleep_timeout_minutes = model.display_sleep_timeout_minutes};
     esp_err_t error = nvs_set_blob(handle_, kSettingsKey, &record, sizeof(record));
     if (error == ESP_OK) {
         error = nvs_commit(handle_);

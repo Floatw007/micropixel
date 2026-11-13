@@ -1,3 +1,5 @@
+#include "sdk/system.hpp"
+
 #include "runtime/service_binding.hpp"
 #include "sdk/clock.hpp"
 #include "sdk/launch_arguments.hpp"
@@ -13,18 +15,18 @@ using micropixel::runtime::ServiceCache;
 namespace {
 
 ServiceCache random_service;
-ServiceCache system_service;
+ServiceCache system_core_service;
+ServiceCache system_settings_service;
 micropixel_system_launch_arguments_response_t cached_launch_arguments{};
 bool launch_arguments_loaded{};
 void LoadLaunchArguments() {
     if (launch_arguments_loaded) {
         return;
     }
-    RequireOk(OpenService(system_service, MICROPIXEL_SERVICE_SYSTEM, MICROPIXEL_SYSTEM_INTERFACE_MAJOR,
-                          MICROPIXEL_SYSTEM_INTERFACE_MINOR),
+    RequireOk(OpenService(system_core_service, MICROPIXEL_SERVICE_SYSTEM, MICROPIXEL_SYSTEM_INTERFACE_MAJOR, 0U),
               "system.open");
     uint32_t response_size = 0U;
-    RequireOk(CallService(system_service, MICROPIXEL_SYSTEM_METHOD_GET_LAUNCH_ARGUMENTS, nullptr, 0U,
+    RequireOk(CallService(system_core_service, MICROPIXEL_SYSTEM_METHOD_GET_LAUNCH_ARGUMENTS, nullptr, 0U,
                           &cached_launch_arguments, sizeof(cached_launch_arguments), response_size),
               "system.launch_arguments");
     if (response_size < sizeof(cached_launch_arguments) ||
@@ -98,12 +100,11 @@ uint32_t Random::Below(uint32_t upper_bound) const {
 
 Locale Localization::CurrentLocale() const {
     Locale locale{};
-    RequireOk(OpenService(system_service, MICROPIXEL_SERVICE_SYSTEM, MICROPIXEL_SYSTEM_INTERFACE_MAJOR,
-                          MICROPIXEL_SYSTEM_INTERFACE_MINOR),
+    RequireOk(OpenService(system_core_service, MICROPIXEL_SERVICE_SYSTEM, MICROPIXEL_SYSTEM_INTERFACE_MAJOR, 0U),
               "system.open");
     micropixel_system_locale_response_t wire{};
     uint32_t response_size = 0U;
-    RequireOk(CallService(system_service, MICROPIXEL_SYSTEM_METHOD_GET_LOCALE, nullptr, 0U, &wire, sizeof(wire),
+    RequireOk(CallService(system_core_service, MICROPIXEL_SYSTEM_METHOD_GET_LOCALE, nullptr, 0U, &wire, sizeof(wire),
                           response_size),
               "system.locale");
     if (response_size < sizeof(wire) || wire.size < sizeof(wire) || wire.tag_length == 0U ||
@@ -112,6 +113,17 @@ Locale Localization::CurrentLocale() const {
     }
     CopyBytes(locale.tag_, wire.tag, wire.tag_length + 1U);
     return locale;
+}
+
+bool System::OpenSettings() const {
+    if (OpenService(system_settings_service, MICROPIXEL_SERVICE_SYSTEM, MICROPIXEL_SYSTEM_INTERFACE_MAJOR,
+                    MICROPIXEL_SYSTEM_INTERFACE_MINOR) != MICROPIXEL_STATUS_OK) {
+        return false;
+    }
+    uint32_t response_size = 0U;
+    return CallService(system_settings_service, MICROPIXEL_SYSTEM_METHOD_OPEN_SETTINGS, nullptr, 0U, nullptr, 0U,
+                       response_size) == MICROPIXEL_STATUS_OK &&
+           response_size == 0U;
 }
 
 uint32_t LaunchArguments::count() const {

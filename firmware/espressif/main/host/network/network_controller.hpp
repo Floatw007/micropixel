@@ -33,6 +33,9 @@ class NetworkController final : public Network {
         std::expected<void, device::WifiError> Connect(std::string_view ssid, std::string_view password) override;
         std::expected<void, device::WifiError> Disconnect() override;
         std::expected<void, device::WifiError> Forget(std::string_view ssid) override;
+        std::expected<void, device::WifiError> SetRealtimeMode(bool enabled) override {
+            return owner_.wifi_.SetRealtimeMode(enabled);
+        }
 
        private:
         NetworkController& owner_;

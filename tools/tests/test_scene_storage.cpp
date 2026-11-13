@@ -45,8 +45,15 @@ struct Message final {
     micropixel_graphics_scene_header_t header{
         .magic = MICROPIXEL_GRAPHICS_SCENE_MAGIC,
         .kind = MICROPIXEL_GRAPHICS_SCENE_KEYFRAME,
+        .flags = 0U,
+        .total_size = 0U,
         .generation = 1U,
+        .base_revision = 0U,
         .revision = 1U,
+        .record_count = 0U,
+        .node_count = 0U,
+        .container_count = 0U,
+        .batch_instance_count = 0U,
     };
     std::vector<uint8_t> bytes = std::vector<uint8_t>(sizeof(header));
     template <typename T>
@@ -67,15 +74,21 @@ struct Message final {
             .batch_node_id = 0U,
             .first_instance = first,
             .instance_count = count,
+            .reserved0 = 0U,
             .property_mask = kInstanceMask});
         for (uint16_t index = 0U; index < count; ++index) {
             Append(micropixel_graphics_scene_sprite_instance_t{.x = static_cast<int32_t>((first + index) % 32U),
                                                                .y = static_cast<int32_t>((first + index) / 32U),
                                                                .width = 1,
                                                                .height = 1,
+                                                               .source_x = 0,
+                                                               .source_y = 0,
+                                                               .source_width = 0,
+                                                               .source_height = 0,
                                                                .rgb888 = color,
                                                                .opacity = 255U,
-                                                               .flags = MICROPIXEL_GRAPHICS_SCENE_INSTANCE_VISIBLE});
+                                                               .flags = MICROPIXEL_GRAPHICS_SCENE_INSTANCE_VISIBLE,
+                                                               .reserved0 = 0U});
         }
     }
     void Text(uint16_t node_id, uint32_t mask, std::string_view text) {
@@ -84,12 +97,14 @@ struct Message final {
             .node = {.record = {.opcode = MICROPIXEL_GRAPHICS_SCENE_OP_TEXT, .size = static_cast<uint16_t>(size)},
                      .node_id = node_id,
                      .flags = MICROPIXEL_GRAPHICS_SCENE_NODE_VISIBLE,
+                     .reserved0 = 0U,
                      .property_mask = mask},
             .x = 1,
             .y = 1,
             .rgb888 = 0xffffffU,
             .font_handle = 1U,
             .text_length = static_cast<uint16_t>(text.size()),
+            .reserved0 = 0U,
         };
         const size_t offset = bytes.size();
         bytes.resize(offset + size, 0U);
@@ -105,7 +120,8 @@ struct Message final {
                                .size = sizeof(micropixel_graphics_scene_node_link_record_t)},
                     .node_id = node,
                     .parent_container_id = 0U,
-                    .sibling_order = node});
+                    .sibling_order = node,
+                    .reserved0 = 0U});
             }
         }
         header.total_size = static_cast<uint32_t>(bytes.size());
@@ -128,9 +144,12 @@ Message KeyframeBody(uint16_t instances, uint16_t nodes, uint32_t generation) {
                             .size = sizeof(micropixel_graphics_scene_sprite_batch_record_t)},
                  .node_id = 0U,
                  .flags = MICROPIXEL_GRAPHICS_SCENE_NODE_VISIBLE,
+                 .reserved0 = 0U,
                  .property_mask = kNodeMask | MICROPIXEL_GRAPHICS_SCENE_NODE_CONTENT},
+        .texture_handle = 0U,
         .capacity = instances,
-        .opacity = 255U});
+        .opacity = 255U,
+        .reserved0 = 0U});
     message.Instance(0U, instances, 0x00ff00U);
     for (uint16_t index = 1U; index < nodes; ++index) {
         message.Record(micropixel_graphics_scene_rect_record_t{
@@ -138,13 +157,15 @@ Message KeyframeBody(uint16_t instances, uint16_t nodes, uint32_t generation) {
                                 .size = sizeof(micropixel_graphics_scene_rect_record_t)},
                      .node_id = index,
                      .flags = MICROPIXEL_GRAPHICS_SCENE_NODE_VISIBLE,
+                     .reserved0 = 0U,
                      .property_mask = kNodeMask | MICROPIXEL_GRAPHICS_SCENE_NODE_GEOMETRY},
             .x = 40,
             .y = 0,
             .width = 1,
             .height = 1,
             .rgb888 = 0xff0000U,
-            .opacity = 255U});
+            .opacity = 255U,
+            .reserved0 = {}});
     }
     return message;
 }
@@ -348,6 +369,9 @@ void TestPsramAdmission() {
     static_assert(!IsGuestPsramAllocationAdmissible({12U * kMiB, 7U * kMiB}, 8U * kMiB, 2U * kMiB));
     static_assert(!IsGuestPsramAllocationAdmissible({9U * kMiB, 9U * kMiB}, 8U * kMiB, 2U * kMiB));
     static_assert(!IsGuestPsramAllocationAdmissible({12U * kMiB, 11U * kMiB}, 0U, 2U * kMiB));
+    static_assert(IsGuestPsramAllocationAdmissible({12U * kMiB, 0U}, 8U * kMiB, 2U * kMiB));
+    static_assert(!IsGuestPsramAllocationAdmissible({9U * kMiB, 0U}, 8U * kMiB, 2U * kMiB));
+    static_assert(!IsGuestPsramAllocationAdmissible({0U, 0U}, 1U, 0U));
     static_assert(IsGuestPsramGrowthAdmissible(6U * kMiB, 4U * kMiB, 2U * kMiB));
     static_assert(!IsGuestPsramGrowthAdmissible(6U * kMiB, 4U * kMiB + 1U, 2U * kMiB));
 

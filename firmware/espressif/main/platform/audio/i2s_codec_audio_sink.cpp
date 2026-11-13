@@ -1,5 +1,6 @@
 #include "platform/audio/i2s_codec_audio_sink.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <limits>
@@ -205,6 +206,23 @@ esp_err_t I2sCodecAudioSink::SetAmplifier(bool enabled) const {
     return gpio_set_level(config_.amplifier_enable, AmplifierLevel(enabled));
 }
 
+esp_err_t I2sCodecAudioSink::StartMutedOutputClock() {
+    if (output_enabled_) return ESP_OK;
+    if (tx_ == nullptr || data_if_ == nullptr || converted_frames_ == nullptr) return ESP_ERR_INVALID_STATE;
+    const size_t bytes = kMaximumChunkFrames * config_.output_channels * sizeof(*converted_frames_);
+    std::memset(converted_frames_, 0, bytes);
+    size_t loaded = 0U;
+    const esp_err_t preload_status = i2s_channel_preload_data(tx_, converted_frames_, bytes, &loaded);
+    if (preload_status != ESP_OK || loaded != bytes) {
+        ESP_LOGE(config_.log_tag, "%s could not preload muted I2S clock: %s bytes=%u/%u", config_.name,
+                 esp_err_to_name(preload_status), static_cast<unsigned>(loaded), static_cast<unsigned>(bytes));
+        return preload_status == ESP_OK ? ESP_FAIL : preload_status;
+    }
+    if (data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, true) != ESP_CODEC_DEV_OK) return ESP_FAIL;
+    output_enabled_ = true;
+    return ESP_OK;
+}
+
 esp_err_t I2sCodecAudioSink::FailInitialization(esp_err_t status) {
     Shutdown();
     return status;
@@ -356,16 +374,23 @@ esp_err_t I2sCodecAudioSink::Start(int32_t* scratch_frames, uint32_t frame_count
         frame_count > kMaximumChunkFrames) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (!Lock(pdMS_TO_TICKS(100))) {
+    output_transition_pending_.store(true, std::memory_order_release);
+    if (!Lock(pdMS_TO_TICKS(500))) {
+        output_transition_pending_.store(false, std::memory_order_release);
+        ESP_LOGE(config_.log_tag, "%s playback start timed out waiting for codec lock", config_.name);
         return ESP_ERR_TIMEOUT;
     }
-    if (data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, true) != ESP_CODEC_DEV_OK) {
+    output_transition_pending_.store(false, std::memory_order_release);
+    const esp_err_t clock_status = StartMutedOutputClock();
+    if (clock_status != ESP_OK) {
         Unlock();
-        return ESP_FAIL;
+        return clock_status;
     }
-    output_enabled_ = true;
     std::memset(scratch_frames, 0, static_cast<size_t>(frame_count) * 2U * sizeof(*scratch_frames));
     esp_err_t status = Write(scratch_frames, frame_count);
+    if (status != ESP_OK) {
+        ESP_LOGE(config_.log_tag, "%s playback initial DMA write failed: %s", config_.name, esp_err_to_name(status));
+    }
     if (status == ESP_OK && esp_codec_dev_set_out_mute(codec_, false) != ESP_CODEC_DEV_OK) {
         status = ESP_FAIL;
     }
@@ -376,6 +401,10 @@ esp_err_t I2sCodecAudioSink::Start(int32_t* scratch_frames, uint32_t frame_count
         (config_.amplifier_preroll_ms * config_.sample_rate + frame_count * 1000U - 1U) / (frame_count * 1000U);
     for (uint32_t chunk = 0U; status == ESP_OK && chunk < preroll_chunks; ++chunk) {
         status = Write(scratch_frames, frame_count);
+        if (status != ESP_OK) {
+            ESP_LOGE(config_.log_tag, "%s playback preroll DMA write failed at chunk %lu: %s", config_.name,
+                     static_cast<unsigned long>(chunk), esp_err_to_name(status));
+        }
     }
     if (status != ESP_OK) {
         (void)SetAmplifier(false);
@@ -384,6 +413,7 @@ esp_err_t I2sCodecAudioSink::Start(int32_t* scratch_frames, uint32_t frame_count
         // failed Start() with Shutdown(), and esp_codec_dev_close() owns the
         // single disable transition for an opened codec.
     }
+    playback_active_ = status == ESP_OK;
     Unlock();
     return status;
 }
@@ -411,15 +441,21 @@ esp_err_t I2sCodecAudioSink::Stop() {
     if (codec_ == nullptr || data_if_ == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (!Lock(pdMS_TO_TICKS(100))) {
+    output_transition_pending_.store(true, std::memory_order_release);
+    if (!Lock(pdMS_TO_TICKS(500))) {
+        output_transition_pending_.store(false, std::memory_order_release);
+        ESP_LOGE(config_.log_tag, "%s playback stop timed out waiting for codec lock", config_.name);
         return ESP_ERR_TIMEOUT;
     }
+    output_transition_pending_.store(false, std::memory_order_release);
     const esp_err_t amplifier_status = SetAmplifier(false);
     const int mute_status = esp_codec_dev_set_out_mute(codec_, true);
-    const int disable_status = data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, false);
-    if (disable_status == ESP_CODEC_DEV_OK) {
-        output_enabled_ = false;
+    int disable_status = ESP_CODEC_DEV_OK;
+    if (capture_owner_.load(std::memory_order_acquire) == nullptr) {
+        disable_status = data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, false);
+        if (disable_status == ESP_CODEC_DEV_OK) output_enabled_ = false;
     }
+    playback_active_ = false;
     if (amplifier_status != ESP_OK || mute_status != ESP_CODEC_DEV_OK || disable_status != ESP_CODEC_DEV_OK) {
         Unlock();
         return ESP_FAIL;
@@ -443,6 +479,7 @@ int32_t I2sCodecAudioSink::GetInfo(micropixel_audio_input_info_t& info) {
 
 int32_t I2sCodecAudioSink::Read(int16_t* mono_samples, uint32_t frame_capacity, uint32_t& frames_read) {
     frames_read = 0U;
+    if (capture_owner_.load(std::memory_order_acquire) != nullptr) return MICROPIXEL_STATUS_WOULD_BLOCK;
     if (!HasInput()) {
         return MICROPIXEL_STATUS_UNSUPPORTED;
     }
@@ -461,12 +498,9 @@ int32_t I2sCodecAudioSink::Read(int16_t* mono_samples, uint32_t frame_capacity, 
     // codec ADC and RX DMA. Keep an already-playing output untouched; for a
     // capture-only read, start a muted TX clock and stop it after RX.
     const bool started_output_clock = !output_enabled_;
-    if (started_output_clock && data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, true) != ESP_CODEC_DEV_OK) {
+    if (started_output_clock && StartMutedOutputClock() != ESP_OK) {
         result = MICROPIXEL_STATUS_INTERNAL;
     } else {
-        if (started_output_clock) {
-            output_enabled_ = true;
-        }
         if (!input_enabled_ && data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_IN, true) != ESP_CODEC_DEV_OK) {
             result = MICROPIXEL_STATUS_INTERNAL;
         } else {
@@ -495,8 +529,112 @@ int32_t I2sCodecAudioSink::Read(int16_t* mono_samples, uint32_t frame_capacity, 
     return result;
 }
 
+int32_t I2sCodecAudioSink::BeginCapture(void* owner) {
+    if (owner == nullptr || !HasInput() || !ready_.load(std::memory_order_acquire) || codec_ == nullptr ||
+        data_if_ == nullptr || rx_ == nullptr) {
+        return owner == nullptr ? MICROPIXEL_STATUS_INVALID_ARGUMENT : MICROPIXEL_STATUS_WOULD_BLOCK;
+    }
+    void* expected = nullptr;
+    if (!capture_owner_.compare_exchange_strong(expected, owner, std::memory_order_acq_rel)) {
+        return expected == owner ? MICROPIXEL_STATUS_OK : MICROPIXEL_STATUS_WOULD_BLOCK;
+    }
+    if (!Lock(pdMS_TO_TICKS(100))) {
+        capture_owner_.store(nullptr, std::memory_order_release);
+        return MICROPIXEL_STATUS_RATE_LIMITED;
+    }
+    int32_t result = MICROPIXEL_STATUS_OK;
+    capture_started_output_clock_ = !output_enabled_;
+    if (capture_started_output_clock_ && StartMutedOutputClock() != ESP_OK) {
+        result = MICROPIXEL_STATUS_INTERNAL;
+    } else {
+        if (!input_enabled_ && data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_IN, true) != ESP_CODEC_DEV_OK) {
+            result = MICROPIXEL_STATUS_INTERNAL;
+        } else {
+            input_enabled_ = true;
+        }
+    }
+    if (result != MICROPIXEL_STATUS_OK) {
+        if (capture_started_output_clock_ && output_enabled_ &&
+            data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, false) == ESP_CODEC_DEV_OK) {
+            output_enabled_ = false;
+        }
+        capture_started_output_clock_ = false;
+        capture_owner_.store(nullptr, std::memory_order_release);
+    }
+    Unlock();
+    return result;
+}
+
+int32_t I2sCodecAudioSink::ReadCapture(void* owner, int16_t* mono_samples, uint32_t frame_capacity,
+                                       uint32_t& frames_read) {
+    frames_read = 0U;
+    if (owner == nullptr || capture_owner_.load(std::memory_order_acquire) != owner) {
+        return MICROPIXEL_STATUS_WOULD_BLOCK;
+    }
+    if (mono_samples == nullptr || frame_capacity == 0U || frame_capacity > MICROPIXEL_AUDIO_INPUT_MAX_READ_FRAMES) {
+        return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+    }
+    if (!Lock(pdMS_TO_TICKS(100))) return MICROPIXEL_STATUS_RATE_LIMITED;
+    int32_t result = MICROPIXEL_STATUS_OK;
+    if (output_transition_pending_.load(std::memory_order_acquire)) {
+        Unlock();
+        taskYIELD();
+        return MICROPIXEL_STATUS_RATE_LIMITED;
+    }
+    if (!playback_active_) {
+        std::memset(converted_frames_, 0, kMaximumChunkFrames * config_.output_channels * sizeof(*converted_frames_));
+        uint32_t remaining = frame_capacity;
+        while (remaining != 0U) {
+            // A full AFE read can require several blocking DMA writes. Give a
+            // pending playback start/stop priority between chunks so it never
+            // has to wait for the entire capture transaction while Wi-Fi or
+            // another subsystem is adding scheduler latency.
+            if (output_transition_pending_.load(std::memory_order_acquire)) {
+                result = MICROPIXEL_STATUS_RATE_LIMITED;
+                break;
+            }
+            const uint32_t chunk = std::min(remaining, kMaximumChunkFrames);
+            const size_t bytes = chunk * config_.output_channels * sizeof(*converted_frames_);
+            size_t written = 0U;
+            const esp_err_t write_status =
+                i2s_channel_write(tx_, converted_frames_, bytes, &written, pdMS_TO_TICKS(100));
+            if (write_status != ESP_OK || written != bytes) {
+                result = MICROPIXEL_STATUS_INTERNAL;
+                break;
+            }
+            remaining -= chunk;
+        }
+    }
+    const size_t bytes = static_cast<size_t>(frame_capacity) * sizeof(*mono_samples);
+    if (result == MICROPIXEL_STATUS_OK &&
+        esp_codec_dev_read(codec_, mono_samples, static_cast<int>(bytes)) != ESP_CODEC_DEV_OK) {
+        result = MICROPIXEL_STATUS_INTERNAL;
+    }
+    if (result == MICROPIXEL_STATUS_OK) frames_read = frame_capacity;
+    Unlock();
+    if (output_transition_pending_.load(std::memory_order_acquire)) taskYIELD();
+    return result;
+}
+
+void I2sCodecAudioSink::EndCapture(void* owner) {
+    if (owner == nullptr || capture_owner_.load(std::memory_order_acquire) != owner || !Lock(pdMS_TO_TICKS(100)))
+        return;
+    if (input_enabled_ && data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_IN, false) == ESP_CODEC_DEV_OK) {
+        input_enabled_ = false;
+    }
+    if (capture_started_output_clock_ && !playback_active_ && output_enabled_ &&
+        data_if_->enable(data_if_, ESP_CODEC_DEV_TYPE_OUT, false) == ESP_CODEC_DEV_OK) {
+        output_enabled_ = false;
+    }
+    capture_started_output_clock_ = false;
+    capture_owner_.store(nullptr, std::memory_order_release);
+    Unlock();
+}
+
 void I2sCodecAudioSink::Shutdown() {
     ready_.store(false, std::memory_order_release);
+    capture_owner_.store(nullptr, std::memory_order_release);
+    playback_active_ = false;
     if (config_.amplifier_enable != GPIO_NUM_NC || config_.amplifier_setter != nullptr) {
         (void)SetAmplifier(false);
     }

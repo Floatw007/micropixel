@@ -10,8 +10,8 @@
 
 namespace micropixel {
 
-// PS1-style polygon front end over the Host raster kernels (Graphics 1.6
-// TRIANGLE / QUAD records).
+// PS1-style polygon front end over the Host raster kernels'
+// TRIANGLE / QUAD records.
 //
 // The App owns meshes (vertices + textured, per-corner lit faces) and their
 // transforms; the MeshRenderer runs the per-frame geometry: view transform,

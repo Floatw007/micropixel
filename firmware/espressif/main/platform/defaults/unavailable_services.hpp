@@ -68,7 +68,7 @@ class UnavailableGraphics final : public device::Graphics {
     [[nodiscard]] int32_t PresentDirectSurface(const device::DirectSurfacePresentation&) override {
         return MICROPIXEL_STATUS_UNSUPPORTED;
     }
-    void SuspendDirectSurface() override {}
+    [[nodiscard]] int32_t SuspendDirectSurface() override { return MICROPIXEL_STATUS_OK; }
     void ResumeDirectSurface() override {}
     [[nodiscard]] int32_t DestroyDirectSurface() override { return MICROPIXEL_STATUS_NOT_FOUND; }
 };

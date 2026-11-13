@@ -6,13 +6,21 @@ CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.p4-function-ev.csv"
 
+# Local speech front end: single-microphone VADNet, WakeNet10 "Hi ESP" and
+# Chinese MultiNet7 commands. Hi ESP remains the development wake model until
+# the product-specific Hi Bear WakeNet model is trained.
+# CONFIG_SR_VADN_WEBRTC is not set
+CONFIG_SR_VADN_VADNET1_MEDIUM=y
+CONFIG_SR_WN_WN10_HIESP=y
+CONFIG_SR_MN_CN_MULTINET7_QUANT=y
+
 # Select the Function EV board backend. It publishes display/touch, the
 # ESP32-C6 Wi-Fi coprocessor and USB Serial/JTAG local control.
 # CONFIG_MICROPIXEL_BOARD_METALIO_CLAW4 is not set
 CONFIG_MICROPIXEL_BOARD_ESP32_P4_FUNCTION_EV_BOARD=y
 CONFIG_MICROPIXEL_LVGL_PARTIAL_BUFFER_HEIGHT=40
 CONFIG_MICROPIXEL_FUNCTION_EV_IDLE_FREQUENCY_TELEMETRY=y
-CONFIG_MICROPIXEL_FUNCTION_EV_DISPLAY_IDLE_TIMEOUT_MS=30000
+CONFIG_MICROPIXEL_FUNCTION_EV_DISPLAY_IDLE_TIMEOUT_MS=120000
 CONFIG_PM_PROFILING=y
 
 # Automatic light sleep is enabled at runtime by the Function EV board after

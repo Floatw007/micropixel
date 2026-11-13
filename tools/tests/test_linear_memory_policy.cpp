@@ -15,6 +15,11 @@ int main() {
     assert(GuestLinearMemoryPageLimit({6U * kMiB, kMiB + 64U}, kReserve, 128U) == 16U);
     assert(GuestLinearMemoryPageLimit({3U * kMiB + 64U, 3U * kMiB}, kReserve, 128U) == 16U);
     assert(GuestLinearMemoryPageLimit({32U * kMiB, 32U * kMiB}, kReserve, 128U) == 128U);
+    // ESP32-P4 has been observed returning zero for the largest-block query
+    // while direct PSRAM allocations still succeed. Keep the reserve and let
+    // the real allocation validate contiguity in that inconsistent state.
+    assert(GuestLinearMemoryPageLimit({12U * kMiB, 0U}, kReserve, 128U) == 128U);
+    assert(GuestLinearMemoryPageLimit({3U * kMiB + 64U, 0U}, kReserve, 128U) == 16U);
 
     assert(GuestLinearMemoryPageLimit({kReserve - 1U, kMiB}, kReserve, 128U) == 0U);
     assert(GuestLinearMemoryPageLimit({kReserve, kMiB}, kReserve, 128U) == 0U);

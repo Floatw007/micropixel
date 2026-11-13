@@ -13,11 +13,11 @@
 #include "sdk/graphics.hpp"
 #include "sdk/haptics.hpp"
 #include "sdk/input.hpp"
+#include "sdk/json_reader.hpp"
 #include "sdk/launch_arguments.hpp"
 #include "sdk/localization.hpp"
 #include "sdk/math.hpp"
 #include "sdk/network.hpp"
-#include "sdk/json_reader.hpp"
 #include "sdk/panic.hpp"
 #include "sdk/power_info.hpp"
 #include "sdk/random.hpp"
@@ -28,6 +28,7 @@
 #include "sdk/sphere_view.hpp"
 #include "sdk/storage.hpp"
 #include "sdk/symbols.hpp"
+#include "sdk/system.hpp"
 #include "sdk/tilt_filter.hpp"
 #include "sdk/tone_sequencer.hpp"
 #include "sdk/ui/button.hpp"
@@ -37,5 +38,6 @@
 #include "sdk/ui/label.hpp"
 #include "sdk/ui/layout.hpp"
 #include "sdk/ui/text_button.hpp"
+#include "sdk/voice.hpp"
 
 #endif

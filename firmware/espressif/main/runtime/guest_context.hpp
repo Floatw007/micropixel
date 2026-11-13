@@ -22,6 +22,7 @@
 #include "runtime/services/sensor_service.hpp"
 #include "runtime/services/storage_service.hpp"
 #include "runtime/services/timer_service.hpp"
+#include "runtime/services/voice_service.hpp"
 #include "runtime/touch_event_bridge.hpp"
 
 namespace micropixel::work {
@@ -43,7 +44,8 @@ class GuestContext final {
    public:
     GuestContext(const micropixel_aot_package_t& package, device::DeviceServices& devices,
                  work::BackgroundExecutor& background_executor, std::string_view effective_locale,
-                 const micropixel_system_launch_arguments_response_t& launch_arguments, GuestLogSink* log_sink);
+                 const micropixel_system_launch_arguments_response_t& launch_arguments, OpenSettingsSink open_settings,
+                 void* open_settings_context, GuestLogSink* log_sink);
     GuestContext(const GuestContext&) = delete;
     GuestContext& operator=(const GuestContext&) = delete;
     ~GuestContext();
@@ -208,6 +210,31 @@ class GuestContext final {
     [[nodiscard]] device::DeviceResult<micropixel_audio_input_info_t> AudioInputInfo() const {
         return devices_.audio_input().GetInfo();
     }
+    [[nodiscard]] device::DeviceResult<micropixel_voice_info_t> VoiceInfo() const { return voice_.GetInfo(); }
+    [[nodiscard]] device::DeviceResult<void> VoiceStart() const { return voice_.StartSession(); }
+    [[nodiscard]] device::DeviceResult<void> VoiceCancel() const { return voice_.CancelSession(); }
+    [[nodiscard]] device::DeviceResult<micropixel_voice_state_response_t> VoiceState() const {
+        return voice_.GetState();
+    }
+    [[nodiscard]] device::DeviceResult<device::VoiceTextResult> VoiceReadText(uint8_t kind, uint32_t revision,
+                                                                              uint32_t offset,
+                                                                              std::span<uint8_t> destination) const {
+        return voice_.ReadText(kind, revision, offset, destination);
+    }
+    [[nodiscard]] device::DeviceResult<micropixel_voice_preferences_t> VoicePreferences() const {
+        return voice_.GetPreferences();
+    }
+    [[nodiscard]] device::DeviceResult<void> VoiceSetPreferences(
+        const micropixel_voice_set_preferences_request_t& request) const {
+        return voice_.SetPreferences(request);
+    }
+    [[nodiscard]] device::DeviceResult<micropixel_voice_diagnostics_t> VoiceDiagnostics() const {
+        return voice_.GetDiagnostics();
+    }
+    [[nodiscard]] device::DeviceResult<void> VoiceRunDiagnostic(uint8_t kind) const {
+        return voice_.RunDiagnostic(kind);
+    }
+    [[nodiscard]] device::DeviceResult<void> VoiceClearContext() const { return voice_.ClearContext(); }
     [[nodiscard]] device::DeviceResult<uint32_t> AudioInputRead(int16_t* mono_samples, uint32_t frame_capacity) const {
         return devices_.audio_input().Read(mono_samples, frame_capacity);
     }
@@ -371,6 +398,7 @@ class GuestContext final {
     GpioService gpio_;
     HapticsService haptics_;
     NetworkService network_;
+    VoiceService voice_;
     ResourceService resources_;
     AudioPlaybackService audio_playback_;
     PcmStreamService pcm_stream_;
@@ -393,6 +421,7 @@ class GuestContext final {
     HapticsServiceEndpoint haptics_endpoint_;
     PowerInfoServiceEndpoint power_info_endpoint_;
     NetworkServiceEndpoint network_endpoint_;
+    VoiceServiceEndpoint voice_endpoint_;
     ServiceRegistry service_registry_;
     uint32_t core_sequence_{};
     bool suspended_{};

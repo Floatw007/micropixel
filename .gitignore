@@ -39,6 +39,9 @@ CMakeUserPresets.json
 /guest/apps/graphics-scroll-benchmark/
 /demos/
 
+# Hardware handoff binaries, compressed symbols, screenshots and serial captures stay local.
+/handoff/diagnostics/
+
 # Local Maze Evil art sources; the SDK example ships prepared assets.
 /guest/apps/maze-evil/assets/source/
 

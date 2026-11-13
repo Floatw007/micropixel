@@ -9,5 +9,11 @@ list(APPEND micropixel_sources
     "host/time/system_time.cpp"
 )
 
+if(CONFIG_IDF_TARGET_ESP32P4)
+    list(APPEND micropixel_sources "host/voice/voice_engine.cpp")
+else()
+    list(APPEND micropixel_sources "host/voice/voice_engine_stub.cpp")
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/controller/CMakeLists.txt")
 include("${CMAKE_CURRENT_LIST_DIR}/ui/CMakeLists.txt")

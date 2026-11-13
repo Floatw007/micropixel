@@ -69,10 +69,9 @@ int32_t GraphicsAdapter::PresentDirectSurface(const device::DirectSurfacePresent
     return operations_.present_direct_surface(operations_.context, presentation);
 }
 
-void GraphicsAdapter::SuspendDirectSurface() {
-    if (operations_.suspend_direct_surface != nullptr) {
-        operations_.suspend_direct_surface(operations_.context);
-    }
+int32_t GraphicsAdapter::SuspendDirectSurface() {
+    return operations_.suspend_direct_surface != nullptr ? operations_.suspend_direct_surface(operations_.context)
+                                                         : static_cast<int32_t>(MICROPIXEL_STATUS_OK);
 }
 
 void GraphicsAdapter::ResumeDirectSurface() {

@@ -15,7 +15,7 @@ MicroPixel 把应用逻辑放在 WebAssembly Guest 中，把硬件、系统 UI �
 - Bundle v1 封装 AOT、资源和应用元数据；BundleFS v2 管理可写 App Store，P4 为 24 MiB，S31/S3 为 8 MiB。
 - App Hall、Status Layer、系统手势、亮度和设备主音量由 Host 管理。
 
-多 Guest 并行、Guest 多线程、Guest Network/Camera Service 和通用 Widget Server 不属于当前基线。
+多 Guest 并行、Guest 多线程、Guest Camera Service 和通用 Widget Server 不属于当前基线。
 
 ## 2. Host 分层
 
@@ -63,7 +63,10 @@ Host `AsyncWifi` 用独立的有界执行器串行执行驱动命令和实时信
 后台切换完成且 500 ms 防连点窗口结束后才重新允许点击；页面关闭时清理计时器。
 队列拥塞时保留单个待处理开关请求。关闭蜂窝先以 `Stop(0)` 发布取消，唤醒正在等待的 AT/注册流程，再由后台完成停止和断电；
 不在持锁的 Host 路径等待驱动退出，也不等待共用执行器轮到清理任务才取消搜网。
-信号查询由有界后台执行器完成，ISR 和驱动状态回调只发布变化。Guest Network Service 仍未开放。
+信号查询由有界后台执行器完成，ISR 和驱动状态回调只发布变化。Guest Network 1.0 已开放
+`GET_INFO/START/READ/CANCEL/CLOSE` 和完成事件，Host 由 `ManagedHttpClient` 代发 HTTPS；只有通过
+USB `terminal configure` 写入 Profile 后，Guest 才能访问该 `https://` origin 和绑定的 AppId，
+未配置时 `START` 返回 `NOT_FOUND`。
 
 系统页面、交互和生命周期由 Host 统一管理，分辨率 profile 提供布局，Board 提供显示、亮度和转场能力。
 硬件转场可缺省，基本交互仍可工作。无转场时回到 Hall 必须同步刷新到面板，不能只标记 LVGL
@@ -252,8 +255,9 @@ GuestContext 的任务侧服务工作区显式分配在 PSRAM，随 Session 析�
 Guest 线性内存位于 PSRAM，按需增长，当前策略上限为 8 MiB，并受最大连续块与 Host 安全水位约束。
 实例化时先取“总空闲减 Host 预留”与“最大连续空闲块”的较小值，再扣除分配开销并向下取整到 Wasm 页。
 Host 默认预留 1 MiB，可以分布在其他空闲块中，不要求与 Guest 线性内存处于同一连续块。
-Host-owned 纹理和 surface 在实际分配时同样检查安全水位，不提前占满理论配额。这样轻量应用能把内存
-留给显示、解码和系统交互；应用不能假定理论上限始终可分配。
+Host-owned 纹理、surface 和 PCM 流缓冲直接按需从 PSRAM 分配，不经过 Guest 线性内存准入；
+这些分配属于上述 Host 预留的服务对象，失败时保留旧资源并返回错误。它们会减少 Guest 后续可增长的
+空间，因此轻量应用仍需把内存留给显示、解码和系统交互；应用不能假定理论上限始终可分配。
 
 可处理的业务失败返回 Result；编程错误和 ABI 安全失败进入 panic/fault policy。异常和 RTTI 关闭。
 AppSession 的 trap 详情保留 SDK panic、WAMR 异常及最近一次图片解码失败的资源 ID 和原因；
@@ -299,7 +303,9 @@ NVS 不影响应用。格式、迁移和恢复规则只在 [BundleFS 文档](bun
 
 设备能力回答“能否提供操作”，权限回答“当前应用是否获准操作”。Service 发现和版本协商不等于授权；
 缺失能力与权限拒绝必须使用不同错误语义，权限应按动作划分。
-当前 requirements section、权限声明与 grant 尚未实现，不能把进入 main 后的 Trap 当作兼容性预检。
+当前 requirements section 已在安装和启动前校验 Core ABI 与 Service 版本；显示尺寸、布局与
+capability 的完整预检尚未接入流程，权限声明与 grant 也尚未实现，不能把进入 main 后的 Trap
+当作兼容性预检。
 
 ## 8. 架构禁止项
 

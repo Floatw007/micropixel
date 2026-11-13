@@ -42,7 +42,7 @@ class DirectSurfaceService final {
     [[nodiscard]] ServiceResult<void> Destroy(micropixel_surface_handle_t surface_handle);
 
     // Host pause: stop scanning out and return every in-flight buffer.
-    void Suspend();
+    [[nodiscard]] ServiceResult<void> Suspend();
     void Resume();
     // Session teardown: destroys the surface before the event queue closes.
     void Shutdown();

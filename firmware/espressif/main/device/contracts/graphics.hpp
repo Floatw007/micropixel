@@ -182,8 +182,9 @@ class Graphics {
     // stays created, and until ResumeDirectSurface every further Present is
     // released unshown (the Guest may still present on its way to the suspend
     // safe point). DestroyDirectSurface returns the buffers the same way and
-    // then invalidates the surface. ReleaseGuestResources implies
-    // DestroyDirectSurface.
+    // then invalidates the surface. A timed-out destroy keeps its release sink
+    // and buffer references valid; the caller must retry before releasing
+    // Guest memory. ReleaseGuestResources implies DestroyDirectSurface.
     //
     // Suspend/Resume are also called when no Direct Surface exists: a device
     // may scan the composited Scene frames out through the same exclusive
@@ -192,7 +193,7 @@ class Graphics {
                                                       const DirectSurfaceReleaseSink& sink,
                                                       DirectSurfaceInfo& info_out) = 0;
     [[nodiscard]] virtual int32_t PresentDirectSurface(const DirectSurfacePresentation& presentation) = 0;
-    virtual void SuspendDirectSurface() = 0;
+    [[nodiscard]] virtual int32_t SuspendDirectSurface() = 0;
     virtual void ResumeDirectSurface() = 0;
     [[nodiscard]] virtual int32_t DestroyDirectSurface() = 0;
 };

@@ -128,7 +128,10 @@ esp_err_t BoardHardware::InitializeDisplay() {
     esp_lcd_dpi_panel_config_t dpi_config{};
     dpi_config.virtual_channel = 0U;
     dpi_config.dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT;
-    dpi_config.dpi_clock_freq_mhz = 52.0F;
+    // Lower the RGB888 scanout demand on PSRAM during App transitions. The
+    // EK79007 1024x600 timing permits a 40.8 MHz minimum DCLK; 44 MHz retains
+    // about 51 Hz with these porches while reducing load from the prior 48 MHz.
+    dpi_config.dpi_clock_freq_mhz = 44.0F;
     dpi_config.in_color_format = LCD_COLOR_FMT_RGB888;
     dpi_config.out_color_format = LCD_COLOR_FMT_RGB888;
     dpi_config.num_fbs = 2U;

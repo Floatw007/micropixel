@@ -84,7 +84,7 @@ int main() {
                     .CreateContainer({.clip = {0, 0, static_cast<int32_t>(renderer_info.width()),
                                                static_cast<int32_t>(renderer_info.height())}})
                     .value();
-    // Graphics 1.4: a cached-content container travels its flag in the
+    // A cached-content container travels its flag in the
     // keyframe and keeps echoing it in later patches that only move it.
     auto terrain = game.CreateContainer({.clip = {0, 100, 200, 60}, .cache_content = true}).value();
     auto ground = terrain.CreateShape({0, 40, 400, 20}, micropixel::Color::Green()).value();
@@ -126,7 +126,7 @@ int main() {
         return 83;
     }
 
-    // Graphics 1.7: grow an existing scene to 1024 total instances, then
+    // Grow an existing scene to 1024 total instances, then
     // patch its final slot. Node count no longer consumes instance capacity.
     auto expanded = game.CreateSpriteBatch(1020U).value();
 

@@ -72,6 +72,19 @@ idf_component_register(
     REQUIRES ${micropixel_requires}
 )
 
+# ESP-SR 2.5.5's compile manifest omits the bias-free W8A16 1x1 kernel used by
+# the ESP32-P4 WakeNet10 model. Register the missing kernel from the project
+# instead of modifying the managed component; esp-dl merges this request with
+# the component's own model requirements at the deferred finalize step.
+if(CONFIG_IDF_TARGET_ESP32P4)
+    idf_build_get_property(micropixel_build_components BUILD_COMPONENTS)
+    if("espressif__esp-dl" IN_LIST micropixel_build_components)
+        idf_component_get_property(micropixel_espdl_dir espressif__esp-dl COMPONENT_DIR)
+        include(${micropixel_espdl_dir}/cmake/compile_register.cmake)
+        esp_dl_compile_add_yml("${CMAKE_CURRENT_LIST_DIR}/host/voice/esp-dl.compile_req.yml")
+    endif()
+endif()
+
 # A stable mutable font proxy is populated after lv_init and before widgets.
 # Host UI and Guest system handles share the same Tiny TTF implementation.
 idf_component_get_property(micropixel_lvgl_lib lvgl__lvgl COMPONENT_LIB)

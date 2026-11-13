@@ -8,8 +8,8 @@ ABI v2 的机器可读定义以
 wire struct 编解码、句柄所有权和错误转换，应用不直接依赖 C ABI。
 
 Core ABI 为 **2.0**，与 1.x 完全不兼容，不保留任何 1.x 方法编号、结构前缀或兼容 shim。
-所有 Service 接口在 2.0 下重新从 **1.0** 起算：Graphics、Input、Resource、Audio、System、Timer、
-Storage、Random、Devices、Sensors、GPIO、Haptics、Power 均为 1.0。绘制通道为 `SCENE`（1）与
+所有 Service 接口在 2.0 下重新从 **1.0** 起算：Graphics、Resource、Network、Timer、Storage、Random、
+Devices、Sensors、GPIO、Haptics、Power 均为 1.0，Input、Audio、System 与 Voice 为 1.1。绘制通道为 `SCENE`（1）与
 `RASTER`（2）；2.5D 与多边形游戏的几何前端（`sdk/raycast.hpp`、`sdk/mesh_renderer.hpp`）完全在
 Guest SDK 内，不引入新的 wire。
 图形接口的设计契约见 [SDK API 设计](../sdk/README.zh-CN.md#图形先选择更新模型)。
@@ -71,11 +71,14 @@ Service（Timer、Sensors、GPIO、Haptics）直接用动词（`CREATE`、`START
 ## Service 模型
 
 当前 Service ID：Timer `1`、Storage `2`、Resource `3`、Random `4`、System `5`、Devices `6`、
-Graphics `16`、Input `17`、Audio `18`、Sensors `20`、GPIO `21`、Haptics `22`、Power `23`；
-Network `19` 只预留 ID，尚未实现。
+Graphics `16`、Input `17`、Audio `18`、Network `19`、Sensors `20`、GPIO `21`、Haptics `22`、
+Power `23`、Voice `24`。Network 1.0 已定义并实现，接口见后文 Network 一节；Voice 1.1 的方法与事件
+尚未在本文展开。
 
-System 提供最长 31 bytes 的 BCP 47 locale tag。Host 返回当前 Catalog 和字体确实可用的 effective
-Locale；基础固件只有 `en`，以后安装语言组件并改变设备语言不需要修改 Guest ABI。Locale 在一个
+System 1.0 提供最长 31 bytes 的 BCP 47 locale tag。Host 返回当前 Catalog 和字体确实可用的 effective
+Locale；基础固件只有 `en`，以后安装语言组件并改变设备语言不需要修改 Guest ABI。System 1.1 新增
+`OPEN_SETTINGS`：Guest 只能请求打开 Host 系统设置，不能借此直接读取或修改 Wi-Fi、亮度、音量、
+固件设置或 Host NVS；Host 可以先协作停止前台 Guest，再显示系统设置。Locale 在一个
 AppSession 内不可变；用户返回 App Hall 修改语言后，下一次启动 Guest 才会取得新值，不投递
 locale-change event。`GET_LAUNCH_ARGUMENTS` 返回本次 AppSession 的只读参数快照：最多 16 项，UTF-8
 字符串区合计最多 512 bytes，每项以 NUL 结尾并由固定 `offsets[]` 定位。Host 在进入 Guest `main()`
@@ -106,7 +109,8 @@ Graphics GET_INFO 为 36 字节，Audio GET_INFO 为 28 字节，Audio Tone 请�
 
 - Timer、Storage、Resource、Audio 控制以及各类 `GET_INFO` 使用 `service_call`。
 - Graphics Scene keyframe/patch 与 Raster draw list 使用 `service_submit`，避免逐对象调用跨 ABI。
-- 未来网络下载的数据面优先使用独立 Service channel；只有真机基准证明现有 transport
+- Network 响应通过 `service_call` 的 `READ` 按 `offset`/`capacity` 分块取回，单响应上限 64 KiB；
+  更大或持续的下载数据面才优先使用独立 Service channel，且只有真机基准证明现有 transport
   无法满足背压或吞吐需求时，才讨论新增 Core import。
 - Timer、Input 等真正的异步通知通过 `micropixel_event_t` 返回；Resource 加载是同步 call。
 
@@ -300,8 +304,9 @@ Ogg Opus source/playback 分层：
   0..1000 的相对音量和 loop flag；
 - 自然结束或解码失败投递 `AUDIO_EVENT_PLAYBACK_FINISHED`，`source` 和 payload 都携带 playback handle，
   `status` 区分成功与失败；主动 `STOP` 不投递完成事件；
-- 压缩数据直接读取当前 App Bundle 的只读映射，Guest 不上传 PCM 或 codec packets。网络 URL、下载进度、
-  缓存与取消以后由 Resource/Network Service 管理，不改变 Audio source/playback 的所有权语义。
+- 压缩数据直接读取当前 App Bundle 的只读映射，Guest 不上传 PCM 或 codec packets。网络获取、进度、
+  缓存与取消由 Network 1.0 的请求 API 管理；Audio source/playback 仍只接受 Bundle asset，所有权
+  语义不变。
 
 Guest 生成 PCM 的推流通道，能力位 `AUDIO_CAPABILITY_PCM_STREAM`：
 
@@ -325,6 +330,44 @@ Audio 1.1 增加有界 PCM 输入，能力位 `AUDIO_CAPABILITY_INPUT_PCM`：
   请求、响应容量和长度，不可把 DMA 缓冲或 Host 指针暴露给 Guest；
 - 输入是设备共享能力，不创建长期 handle。没有输入硬件或初始化失败时不宣告 capability，并返回
   `UNAVAILABLE`。应用必须先检查 capability，再读取实际格式。
+
+## Network
+
+Network 1.0 由 Host 代发 HTTPS 请求，Guest 不接触 socket、TLS 或凭据。当前定义五个 method 和一个
+event：
+
+- `GET_INFO` 返回 `micropixel_network_info_t`：`configured`、`route_online`、`time_synchronized`、
+  `max_active_requests`、`max_queued_requests`、`max_response_bytes`、`max_request_body_bytes`、
+  `capabilities` 与 `profile_revision`；能力位为 `MICROPIXEL_NETWORK_CAP_HTTPS`、
+  `MICROPIXEL_NETWORK_CAP_AUTHENTICATED_PROFILE`、`MICROPIXEL_NETWORK_CAP_MEMORY_CACHE` 和
+  `MICROPIXEL_NETWORK_CAP_PERSISTENT_CACHE`。
+- `START {method, cache_mode, path_length, idempotency_key_length, body_length}` 后紧跟相对路径、
+  JSON body 和幂等键字节；Host 复制请求后立即返回 `request_handle`。`method` 为 GET、POST、PUT、
+  PATCH 或 DELETE；GET/DELETE 禁止 body，非 GET 只能使用 `CACHE_NONE`。路径必须以 `/` 开头且不含
+  控制字符、反斜杠或 `..` 段，上限 `MICROPIXEL_NETWORK_MAX_PATH_BYTES`（256）；body 上限 4 KiB，
+  幂等键上限 64 bytes。
+- `READ {request_handle, offset, capacity}` 在请求完成后分块读取响应，单次 `capacity` 上限
+  `MICROPIXEL_NETWORK_MAX_READ_BYTES`（4096），响应总长上限 `MICROPIXEL_NETWORK_MAX_RESPONSE_BYTES`
+  （64 KiB）；请求完成前返回 `WOULD_BLOCK`。
+- `CANCEL` 终止执行，`CLOSE` 释放句柄和响应缓冲；Session 结束会取消并释放该 Session 的全部请求。
+  取消未完成的请求仍会投递 `MICROPIXEL_NETWORK_EVENT_REQUEST_COMPLETE`（`status` 为
+  `CANCELLED`），`CLOSE` 不投递。
+- `MICROPIXEL_NETWORK_EVENT_REQUEST_COMPLETE`（event 1）的 16-byte payload 携带 `request_handle`、
+  `body_length`、`cache_age_seconds`、`http_status` 和 `source`（live、memory cache 或
+  persistent cache）。`status` 表示传输状态；HTTP 4xx/5xx 由 `http_status` 表达，不算传输失败。
+
+Host 与 SDK 状态：`NetworkServiceEndpoint` 已在 GuestContext 的 Service Registry 注册，
+`NetworkService` 经 `device::ManagedNetwork` 转发到平台的 `ManagedHttpClient`（两个 worker、同时最多
+两个活动请求和四个排队请求，响应缓冲位于 PSRAM）。SDK 提供 `Application::network()`、
+`Network::info()/Start()`、move-only 的 `NetworkRequest::Read/Cancel/Close` 以及
+`NetworkCompleteEvent`。
+
+开放前提：Host 只访问 USB `terminal configure` 写入的 `https://` origin，并使用同一 Profile 中的
+CA、Bearer Token 与 `allowed_app_id`。未配置 Profile 时 `GET_INFO.configured = 0` 且 `START` 返回
+`NOT_FOUND`；Session 的 AppId 与 `allowed_app_id` 不一致时返回 `PERMISSION_DENIED`。执行请求还要求
+Host 已有可用默认路由和可信 UTC 时间，否则以 `INTERNAL` 或 `STALE_STATE` 失败（启用缓存的 GET
+可能回退到缓存响应）。当前没有通用代理、任意 scheme 或 Guest 可读写的凭据，也没有按动作划分的
+权限声明与 grant；一个 Profile 只绑定一个 AppId。缓存只对 GET 生效，写请求不会离线排队。
 
 ## 设备发现与外设 Service
 
@@ -362,7 +405,8 @@ handle 懒启动 worker，最后一个释放或 App Suspend 时停止；GPIO ISR
 
 事件 envelope 固定为 48 bytes，包含 `service_id + event_id`、flags、source、Guest 单调时间、
 sequence、status 和 16-byte payload。event ID 只在所属 Service 内解释；当前定义 Timer expired、
-Input touch、Input semantic key、Input axis（1.1）、Audio playback finished、Audio PCM stream low water、Devices added/removed、GPIO edge、
+Input touch、Input semantic key、Input axis（1.1）、Audio playback finished、Audio PCM stream low water、
+Network request complete、Devices added/removed、GPIO edge、
 Haptics finished 和 Core host wake。新增事件不会扩大 Core import 表。
 
 - 周期 Timer 队列中同一 handle 最多保留一条记录。积压时 `elapsed_us` 累加，`missed_count` 统计未单独

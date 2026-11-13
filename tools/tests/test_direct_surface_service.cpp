@@ -90,9 +90,13 @@ class FakeGraphics final : public micropixel::device::Graphics {
         return MICROPIXEL_STATUS_OK;
     }
 
-    void SuspendDirectSurface() override {
+    [[nodiscard]] int32_t SuspendDirectSurface() override {
         ++suspend_count;
+        if (suspend_status != MICROPIXEL_STATUS_OK) {
+            return suspend_status;
+        }
         ReleaseAll();
+        return MICROPIXEL_STATUS_OK;
     }
 
     void ResumeDirectSurface() override { ++resume_count; }
@@ -100,6 +104,11 @@ class FakeGraphics final : public micropixel::device::Graphics {
     [[nodiscard]] int32_t DestroyDirectSurface() override {
         if (!created) {
             return MICROPIXEL_STATUS_NOT_FOUND;
+        }
+        ++destroy_attempt_count;
+        if (destroy_timeouts_remaining != 0U) {
+            --destroy_timeouts_remaining;
+            return MICROPIXEL_STATUS_TIMEOUT;
         }
         ReleaseAll();
         created = false;
@@ -120,8 +129,11 @@ class FakeGraphics final : public micropixel::device::Graphics {
     uint8_t in_flight_mask{};
     uint32_t present_count{};
     uint32_t suspend_count{};
+    int32_t suspend_status{MICROPIXEL_STATUS_OK};
     uint32_t resume_count{};
     uint32_t destroy_count{};
+    uint32_t destroy_attempt_count{};
+    uint32_t destroy_timeouts_remaining{};
 
    private:
     void ReleaseAll() {
@@ -230,6 +242,17 @@ int main() {
     {
         micropixel::runtime::HostBufferView none{};
         Require(service.HostBuffer(0U, 0U, none) == MICROPIXEL_STATUS_NOT_FOUND);
+        // A geometry whose pitch * height wraps in 64 bits is refused before
+        // any PSRAM allocation or device call. FakeGraphics would answer
+        // INVALID_ARGUMENT for it, so RESOURCE_EXHAUSTED proves the service
+        // rejected the request itself.
+        auto wrapped = HostCreateRequest(2U);
+        wrapped.width = 3036801443U;
+        wrapped.height = 3037199570U;
+        auto refused = service.Create(wrapped);
+        Require(!refused && refused.error().status == MICROPIXEL_STATUS_RESOURCE_EXHAUSTED);
+        Require(!backend.created);
+        // The service is still usable with a normal geometry afterwards.
         auto host = service.Create(HostCreateRequest(2U));
         Require(host.has_value() && backend.created && backend.config.flags == 0U);
         Require(service.native_byte_swapped());
@@ -354,9 +377,18 @@ int main() {
     Require(QueueEmpty(events));
     Require(service.Present(PresentRequest(surface, 0U)).has_value());
 
+    // A failed device drain reaches the lifecycle caller. The service keeps
+    // the surface and its in-flight ownership intact so the caller can abort
+    // the surrounding suspend transition safely.
+    backend.suspend_status = MICROPIXEL_STATUS_TIMEOUT;
+    auto failed_suspend = service.Suspend();
+    Require(!failed_suspend && failed_suspend.error().status == MICROPIXEL_STATUS_TIMEOUT);
+    Require(backend.created && backend.in_flight_mask == 0x1U);
+    backend.suspend_status = MICROPIXEL_STATUS_OK;
+
     // Suspend returns every in-flight buffer without destroying the surface.
-    service.Suspend();
-    Require(backend.suspend_count == 1U && backend.created && backend.in_flight_mask == 0U);
+    Require(service.Suspend().has_value());
+    Require(backend.suspend_count == 2U && backend.created && backend.in_flight_mask == 0U);
     service.Resume();
     Require(backend.resume_count == 1U);
     Require(PopRelease(events, surface, 0U, 4000U));
@@ -368,8 +400,14 @@ int main() {
     // every buffer to the Guest, and the presenter task must never block on a
     // Guest queue that a departing Guest no longer drains.
     Require(service.Destroy(surface + 1U).error().status == MICROPIXEL_STATUS_NOT_FOUND);
+    backend.destroy_timeouts_remaining = 1U;
+    auto failed_destroy = service.Destroy(surface);
+    Require(!failed_destroy && failed_destroy.error().status == MICROPIXEL_STATUS_TIMEOUT);
+    Require(backend.created && backend.in_flight_mask == 0x2U);
+    Require(service.Present(PresentRequest(surface, 0U)).error().status == MICROPIXEL_STATUS_STALE_STATE);
     Require(service.Destroy(surface).has_value());
     Require(!backend.created && backend.destroy_count == 2U);  // Host-buffer surface counted one
+    Require(backend.destroy_attempt_count == 3U);
     Require(backend.in_flight_mask == 0U);
     Require(QueueEmpty(events));
     Require(service.Present(PresentRequest(surface, 0U)).error().status == MICROPIXEL_STATUS_NOT_FOUND);
@@ -379,14 +417,16 @@ int main() {
     auto second = service.Create(CreateRequest(3U));
     Require(second.has_value() && second->surface_handle != surface);
     Require(service.Present(PresentRequest(second->surface_handle, 2U)).has_value());
+    backend.destroy_timeouts_remaining = 1U;
     service.Shutdown();
     Require(!backend.created && backend.destroy_count == 3U);
+    Require(backend.destroy_attempt_count == 5U);
     Require(QueueEmpty(events));
     // Suspend/Resume still reach the device without a surface (App Surface
     // scanout shares the presenter); Shutdown is a no-op.
-    service.Suspend();
+    Require(service.Suspend().has_value());
     service.Resume();
     service.Shutdown();
-    Require(backend.suspend_count == 2U && backend.resume_count == 2U && backend.destroy_count == 3U);
+    Require(backend.suspend_count == 3U && backend.resume_count == 2U && backend.destroy_count == 3U);
     return 0;
 }

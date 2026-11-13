@@ -15,6 +15,7 @@ namespace micropixel::host_ui::lvgl::square_common::system_detail_internal {
 
 inline constexpr char kTag[] = "system_details";
 inline constexpr std::array<uint8_t, 4U> kAutoSleepTimeoutMinutes{1U, 5U, 10U, 30U};
+inline constexpr std::array<uint8_t, 4U> kDisplaySleepTimeoutMinutes{1U, 2U, 5U, 10U};
 
 inline const char* DisplayText(const char* text, const char* fallback) {
     return text != nullptr && text[0] != '\0' ? text : fallback;

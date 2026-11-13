@@ -1,11 +1,13 @@
 #include "runtime/wamr/diagnostics.h"
 
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 
 #include "esp_heap_caps.h"
+#include "esp_heap_trace.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 #include "freertos/FreeRTOS.h"
@@ -14,6 +16,34 @@
 #define WAMR_TASK_STACK_SIZE (16U * 1024U)
 
 static const char* TAG = "micropixel_diag";
+
+#if defined(CONFIG_MICROPIXEL_HEAP_CHECKPOINTS) && CONFIG_MICROPIXEL_HEAP_CHECKPOINTS && \
+    defined(CONFIG_HEAP_TRACING_STANDALONE) && CONFIG_HEAP_TRACING_STANDALONE
+#define MICROPIXEL_HEAP_TRACE_RECORD_COUNT 2048U
+static heap_trace_record_t* s_heap_trace_records;
+
+void micropixel_start_heap_trace(void) {
+    const size_t bytes = MICROPIXEL_HEAP_TRACE_RECORD_COUNT * sizeof(heap_trace_record_t);
+    s_heap_trace_records = heap_caps_calloc(1U, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (s_heap_trace_records == NULL) {
+        esp_rom_printf("HEAP TRACE unavailable: unable to allocate %zu-byte PSRAM buffer\n", bytes);
+        return;
+    }
+
+    esp_err_t status = heap_trace_init_standalone(s_heap_trace_records, MICROPIXEL_HEAP_TRACE_RECORD_COUNT);
+    if (status != ESP_OK) {
+        esp_rom_printf("HEAP TRACE unavailable: init failed err=%d\n", (int)status);
+        return;
+    }
+    status = heap_trace_start(HEAP_TRACE_LEAKS);
+    if (status != ESP_OK) {
+        esp_rom_printf("HEAP TRACE unavailable: start failed err=%d\n", (int)status);
+        return;
+    }
+    esp_rom_printf("HEAP TRACE active: PSRAM live allocations, records=%u buffer=%p size=%zu\n",
+                   MICROPIXEL_HEAP_TRACE_RECORD_COUNT, s_heap_trace_records, bytes);
+}
+#endif
 
 static void log_native_stack_profile(const char* label, size_t configured, size_t minimum_free) {
     if (minimum_free == SIZE_MAX) {
@@ -38,6 +68,10 @@ void micropixel_check_heap(const char* stage) {
     }
     esp_rom_printf("HEAP CHECK ok: %s\n", stage);
 }
+#endif
+
+#if defined(CONFIG_MICROPIXEL_HEAP_SERVICE_CHECKPOINTS) && CONFIG_MICROPIXEL_HEAP_SERVICE_CHECKPOINTS
+void micropixel_check_heap_service(const char* stage) { micropixel_check_heap(stage); }
 #endif
 
 void micropixel_log_heap_state(const char* label) {

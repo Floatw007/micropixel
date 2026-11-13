@@ -136,11 +136,18 @@ ServiceResult<void> RasterService::UploadPalette(const micropixel_raster_palette
 
 ServiceResult<void> RasterService::UploadWarp(const micropixel_raster_warp_upload_request_t& request) {
     if (!available()) return FailService<void>(MICROPIXEL_STATUS_UNSUPPORTED);
-    const uint32_t row_bytes = static_cast<uint32_t>(request.width) * sizeof(uint32_t);
+    // width/height are 16-bit, but row_bytes * height can exceed 32 bits. Keep
+    // every size and the Guest length check in 64 bits, then reject maps that
+    // cannot fit the uint32 allocation interface before multiplying anything
+    // down to uint32.
+    const uint64_t row_bytes = static_cast<uint64_t>(request.width) * sizeof(uint32_t);
+    const uint64_t request_bytes = row_bytes * request.row_count;
+    const uint64_t map_bytes = row_bytes * request.height;
+    const uint64_t span_bytes = static_cast<uint64_t>(request.height) * 2U * sizeof(uint16_t);
     if (request.size != sizeof(request) || request.reserved0 != 0U || request.width == 0U || request.height == 0U ||
         request.row_count == 0U || request.row0 >= request.height ||
-        request.row_count > static_cast<uint32_t>(request.height) - request.row0 ||
-        request.length != row_bytes * request.row_count) {
+        request.row_count > static_cast<uint32_t>(request.height) - request.row0 || request.length != request_bytes ||
+        map_bytes > UINT32_MAX || map_bytes > UINT32_MAX - span_bytes) {
         return FailService<void>(MICROPIXEL_STATUS_INVALID_ARGUMENT);
     }
     const uint8_t* source = ResolveGuest(request.entries, request.length);
@@ -167,16 +174,16 @@ ServiceResult<void> RasterService::UploadWarp(const micropixel_raster_warp_uploa
     // A new map: rows the request does not cover start out skipped, so the
     // App can stream a large map in over several requests. The row spans live
     // in the same allocation, after the entries.
-    const uint32_t map_bytes = row_bytes * request.height;
-    const uint32_t span_bytes = static_cast<uint32_t>(request.height) * 2U * sizeof(uint16_t);
-    uint8_t* entries = Allocate(map_bytes + span_bytes);
+    const uint32_t map_size = static_cast<uint32_t>(map_bytes);
+    const uint32_t span_size = static_cast<uint32_t>(span_bytes);
+    uint8_t* entries = Allocate(map_size + span_size);
     if (entries == nullptr) return FailService<void>(MICROPIXEL_STATUS_RESOURCE_EXHAUSTED);
     if (!Reserve(warps_, request.warp_slot)) {
         heap_caps_free(entries);
         return FailService<void>(MICROPIXEL_STATUS_RESOURCE_EXHAUSTED);
     }
     auto* map = reinterpret_cast<uint32_t*>(entries);
-    auto* spans = reinterpret_cast<uint16_t*>(entries + map_bytes);
+    auto* spans = reinterpret_cast<uint16_t*>(entries + map_size);
     if (!raster::WarpScanRows(source_rows, request.width, request.row_count,
                               spans + static_cast<size_t>(request.row0) * 2U, rows_light) ||
         rows_light >= MICROPIXEL_GRAPHICS_RASTER_MAX_LIGHT_LEVELS) {

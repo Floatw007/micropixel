@@ -86,6 +86,10 @@ const char* RemoteControlDetail(const host_ui::SystemMenuModel& model, const hos
 std::array<char, 96> PowerManagementDetail(const host_ui::SystemMenuModel& model) {
     using Id = host_strings::Id;
     std::array<char, 96> detail{};
+    if (model.idle_power_action == device::IdlePowerAction::kDisabled) {
+        std::snprintf(detail.data(), detail.size(), "%s", UiText(Id::kUiScreenSleepTimeout));
+        return detail;
+    }
     const bool power_off = model.idle_power_action == device::IdlePowerAction::kPowerOff;
     if (model.auto_sleep_timeout_minutes == 0U) {
         std::snprintf(detail.data(), detail.size(), "%s",
@@ -646,7 +650,7 @@ std::expected<void, host_ui::SystemUiError> SystemMenuUi::ShowLocked(lv_obj_t* r
         DrawRow(scroll_content_, 4U, host_ui::SystemMenuItem::kAppearance, LV_SYMBOL_TINT,
                 strings.Get(host_strings::Id::kSystemSettingsAppearance), ThemeDetail(model.theme_mode),
                 theme::kAccent);
-        if (model.idle_power_action != device::IdlePowerAction::kDisabled) {
+        if (model.idle_power_action != device::IdlePowerAction::kDisabled || model.display_sleep_available) {
             DrawRow(scroll_content_, 5U, host_ui::SystemMenuItem::kPowerManagement, LV_SYMBOL_POWER,
                     strings.Get(host_strings::Id::kSystemSettingsPowerManagement), PowerManagementDetail(model).data(),
                     theme::kWarning);

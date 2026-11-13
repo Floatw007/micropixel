@@ -1,6 +1,11 @@
 #include "work/background_executor.hpp"
 
+#include <inttypes.h>
+#include <stdint.h>
+
 #include "esp_log.h"
+#include "esp_rom_sys.h"
+#include "runtime/wamr/diagnostics.h"
 #include "work/task_policy.hpp"
 
 namespace micropixel::work {
@@ -50,6 +55,9 @@ void BackgroundExecutor::WorkerEntry(void* context) {
 }
 
 void BackgroundExecutor::WorkerLoop() {
+#if defined(CONFIG_MICROPIXEL_HEAP_CHECKPOINTS) && CONFIG_MICROPIXEL_HEAP_CHECKPOINTS
+    uint32_t job_sequence = 0U;
+#endif
     for (;;) {
         Job job{};
         if (xQueueReceive(queue_, &job, portMAX_DELAY) != pdTRUE) {
@@ -58,7 +66,15 @@ void BackgroundExecutor::WorkerLoop() {
         if (job.function == nullptr) {
             break;
         }
+#if defined(CONFIG_MICROPIXEL_HEAP_CHECKPOINTS) && CONFIG_MICROPIXEL_HEAP_CHECKPOINTS
+        ++job_sequence;
+        const uintptr_t callback_address = reinterpret_cast<uintptr_t>(job.function);
+        esp_rom_printf("BACKGROUND JOB begin: sequence=%" PRIu32 " callback=0x%" PRIxPTR "\n", job_sequence,
+                       callback_address);
+#endif
+        micropixel_check_heap("before shared background job");
         job.function(job.context);
+        micropixel_check_heap("after shared background job");
     }
     (void)xSemaphoreGive(stopped_);
 }

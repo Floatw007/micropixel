@@ -21,8 +21,10 @@
 #include "sdk/resources.hpp"
 #include "sdk/sensors.hpp"
 #include "sdk/storage.hpp"
+#include "sdk/system.hpp"
 #include "sdk/timer.hpp"
 #include "sdk/types.hpp"
+#include "sdk/voice.hpp"
 
 namespace micropixel {
 
@@ -66,6 +68,8 @@ class Application final {
     [[nodiscard]] constexpr Haptics haptics() const noexcept { return Haptics{Haptics::CapabilityToken{}}; }
     [[nodiscard]] constexpr Network network() const noexcept { return Network{Network::CapabilityToken{}}; }
     [[nodiscard]] constexpr PowerInfo power_info() const noexcept { return PowerInfo{PowerInfo::CapabilityToken{}}; }
+    [[nodiscard]] constexpr Voice voice() const noexcept { return Voice{Voice::CapabilityToken{}}; }
+    [[nodiscard]] constexpr System system() const noexcept { return System{System::CapabilityToken{}}; }
 
     template <typename Handler>
     void Run(Handler&& handler) const {

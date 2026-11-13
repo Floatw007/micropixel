@@ -1,13 +1,21 @@
 menu "WAMR application quotas"
 
     config MICROPIXEL_HEAP_CHECKPOINTS
-        bool "Check Host heap at Guest service and lifecycle boundaries"
+        bool "Check Host heap at diagnostic checkpoints"
         default n
         depends on HEAP_POISONING_LIGHT || HEAP_POISONING_COMPREHENSIVE
         help
-            Diagnostic only: walk all Host heaps before and after Guest service
-            calls and during teardown. Abort on the first detected corruption.
+            Diagnostic only: walk all Host heaps at selected lifecycle and
+            subsystem checkpoints. Abort on the first detected corruption.
             Full heap walks affect frame timing; disable for performance tests.
+
+    config MICROPIXEL_HEAP_SERVICE_CHECKPOINTS
+        bool "Check Host heap around every Guest service call"
+        default n
+        depends on MICROPIXEL_HEAP_CHECKPOINTS
+        help
+            Diagnostic only. Scanning all heaps for each Guest service call can
+            add substantial latency. Leave disabled for lifecycle-only checks.
 
     config MICROPIXEL_GUEST_LINEAR_MEMORY_MAX_PAGES
         int "Maximum Wasm linear-memory pages per Guest"
@@ -176,7 +184,7 @@ menu "MicroPixel board backends"
         int "Function EV controlled display suspend timeout (ms)"
         depends on MICROPIXEL_BOARD_ESP32_P4_FUNCTION_EV_BOARD
         range 5000 600000
-        default 30000
+        default 120000
         help
             After this much foreground display inactivity, detach LVGL and
             delete the MIPI-DPI panel, DBI IO and DSI bus. This releases the

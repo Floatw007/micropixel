@@ -43,6 +43,20 @@ class Audio {
     virtual void BindPcmCompletionSink(PcmCompletionSink sink, void* context) = 0;
     virtual void UnbindPcmCompletionSink(void* context) = 0;
     [[nodiscard]] virtual int32_t StopAll() = 0;
+    // Host-owned controls such as local speech commands may adjust the
+    // physical master volume without exposing that control to Guests.
+    [[nodiscard]] virtual int32_t AdjustMasterVolumePercent(int8_t delta, uint8_t& percent_out) {
+        (void)delta;
+        percent_out = 0U;
+        return MICROPIXEL_STATUS_UNSUPPORTED;
+    }
+    // Host capture pipelines can temporarily stop the physical output without
+    // discarding Guest voices. Success means the output peripheral has
+    // acknowledged the pause and no longer owns the shared codec/I2S path.
+    [[nodiscard]] virtual int32_t PauseOutputForCapture(void* owner) {
+        return owner == nullptr ? MICROPIXEL_STATUS_INVALID_ARGUMENT : MICROPIXEL_STATUS_UNSUPPORTED;
+    }
+    virtual void ResumeOutputAfterCapture(void* owner) { (void)owner; }
     // These methods also define the owning AppSession's foreground state:
     // ResumeAll keeps output ready, while SuspendAll permits idle shutdown.
     [[nodiscard]] virtual int32_t SuspendAll() = 0;

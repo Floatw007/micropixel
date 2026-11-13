@@ -40,6 +40,7 @@ class WifiManager final : public device::Wifi {
                                                                  std::string_view password) override;
     [[nodiscard]] std::expected<void, device::WifiError> Disconnect() override;
     [[nodiscard]] std::expected<void, device::WifiError> Forget(std::string_view ssid) override;
+    [[nodiscard]] std::expected<void, device::WifiError> SetRealtimeMode(bool enabled) override;
 
    private:
     struct HeapCapsDeleter final {
@@ -83,6 +84,8 @@ class WifiManager final : public device::Wifi {
 
     static void WifiEventHandler(void* context, esp_event_base_t event_base, int32_t event_id, void* event_data);
     static void DiscoveryTimerHandler(void* context);
+    static void ConnectionTimerHandler(void* context);
+    static void ConnectionTimeoutEntry(void* context);
     static void RadioStartupEntry(void* context);
     static void SaveSettingsEntry(void* context);
     [[nodiscard]] std::expected<void, device::WifiError> FinishInitialize();
@@ -92,6 +95,9 @@ class WifiManager final : public device::Wifi {
     void HandleGotIp();
     void HandleScanDone();
     void HandleDiscoveryTimer();
+    void HandleConnectionTimeout();
+    void ArmConnectionTimeout();
+    void CancelConnectionTimeout();
 
     [[nodiscard]] std::expected<void, device::WifiError> ConfigureAndConnect(const SavedProfile& profile,
                                                                              bool full_channel_scan);
@@ -120,6 +126,7 @@ class WifiManager final : public device::Wifi {
     TaskHandle_t radio_startup_task_{};
     work::BackgroundExecutor* background_executor_{};
     esp_timer_handle_t discovery_timer_{};
+    esp_timer_handle_t connection_timer_{};
     esp_netif_t* station_netif_{};
     esp_event_handler_instance_t wifi_event_instance_{};
     esp_event_handler_instance_t ip_event_instance_{};
@@ -131,10 +138,13 @@ class WifiManager final : public device::Wifi {
     uint32_t discovery_channel_index_{};
     int32_t active_profile_index_{-1};
     uint8_t reconnect_attempts_{};
+    uint8_t connection_timeout_streak_{};
     uint8_t discovery_backoff_index_{};
     int64_t last_user_scan_request_us_{};
+    int64_t connection_deadline_us_{};
     std::atomic_uint32_t save_request_generation_{};
     std::atomic_bool save_job_scheduled_{};
+    std::atomic_bool connection_timeout_job_scheduled_{};
     bool initialization_started_{};
     bool radio_startup_task_started_{};
     bool initialized_{};
@@ -149,6 +159,7 @@ class WifiManager final : public device::Wifi {
     bool user_scan_after_discovery_{};
     bool discovery_connection_pending_{};
     bool connection_full_channel_scan_{};
+    bool suppress_next_sta_start_discovery_{};
     ScanPurpose scan_purpose_{ScanPurpose::kNone};
     device::WifiStateChangeSink state_change_sink_{};
     void* state_change_context_{};

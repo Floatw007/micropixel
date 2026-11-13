@@ -132,6 +132,17 @@ int main() {
     bad.request.size = sizeof(bad);
     if (cancel(sizeof(bad)) != MICROPIXEL_STATUS_INVALID_ARGUMENT) return 135;
 
+    micropixel_service_info_t system{};
+    if (micropixel_service_open(
+            MICROPIXEL_SERVICE_SYSTEM,
+            MICROPIXEL_INTERFACE_VERSION(MICROPIXEL_SYSTEM_INTERFACE_MAJOR, MICROPIXEL_SYSTEM_INTERFACE_MINOR), &system,
+            sizeof(system)) != MICROPIXEL_STATUS_OK ||
+        system.service_id != MICROPIXEL_SERVICE_SYSTEM || system.interface_major != MICROPIXEL_SYSTEM_INTERFACE_MAJOR ||
+        system.interface_minor < MICROPIXEL_SYSTEM_INTERFACE_MINOR || system.service_handle == 0U ||
+        (system.flags & MICROPIXEL_SERVICE_FLAG_CALL) == 0U) {
+        return 136;
+    }
+
     micropixel::Application app;
     (void)app.random().U32();
     app.log().Info("service_control: core and hardware service routing ready");

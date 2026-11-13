@@ -398,8 +398,11 @@ int32_t NetworkServiceEndpoint::Call(uint32_t method_id, const uint8_t* request,
 }
 
 SystemServiceEndpoint::SystemServiceEndpoint(std::string_view effective_locale,
-                                             const micropixel_system_launch_arguments_response_t& launch_arguments)
-    : launch_arguments_(launch_arguments) {
+                                             const micropixel_system_launch_arguments_response_t& launch_arguments,
+                                             OpenSettingsSink open_settings, void* open_settings_context)
+    : launch_arguments_(launch_arguments),
+      open_settings_(open_settings),
+      open_settings_context_(open_settings_context) {
     if (effective_locale.empty() || effective_locale.size() > MICROPIXEL_LOCALE_TAG_MAX_BYTES) {
         effective_locale = "en";
     }
@@ -431,6 +434,20 @@ int32_t SystemServiceEndpoint::Call(uint32_t method_id, const uint8_t*, uint32_t
     }
     if (method_id == MICROPIXEL_SYSTEM_METHOD_GET_LAUNCH_ARGUMENTS) {
         return WriteValue(launch_arguments_, response, response_capacity, response_size_out);
+    }
+    if (method_id == MICROPIXEL_SYSTEM_METHOD_OPEN_SETTINGS) {
+        response_size_out = 0U;
+        // A zero-capacity Guest buffer may still resolve to the base of linear
+        // memory. Capacity, rather than pointer identity, defines a void
+        // response at the ABI boundary.
+        if (response_capacity != 0U) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        if (open_settings_ == nullptr) {
+            ESP_LOGW(kTag, "system settings request has no Host callback");
+            return MICROPIXEL_STATUS_WOULD_BLOCK;
+        }
+        const bool accepted = open_settings_(open_settings_context_);
+        ESP_LOGI(kTag, "system settings request accepted=%s", accepted ? "yes" : "no");
+        return accepted ? MICROPIXEL_STATUS_OK : MICROPIXEL_STATUS_WOULD_BLOCK;
     }
     return MICROPIXEL_STATUS_UNSUPPORTED;
 }
@@ -883,6 +900,103 @@ int32_t AudioServiceEndpoint::Call(uint32_t method_id, const uint8_t* request, u
     }
     if (method_id == MICROPIXEL_AUDIO_METHOD_PCM_STREAM_CLOSE) {
         return ResultStatus(context_.AudioClosePcmStream(handle));
+    }
+    return MICROPIXEL_STATUS_UNSUPPORTED;
+}
+
+ServiceDescriptor VoiceServiceEndpoint::Describe() const {
+    auto result = context_.VoiceInfo();
+    const uint64_t capabilities = result ? result->capabilities : 0U;
+    return ServiceDescriptor{
+        .service_id = MICROPIXEL_SERVICE_VOICE,
+        .interface_major = MICROPIXEL_VOICE_INTERFACE_MAJOR,
+        .interface_minor = MICROPIXEL_VOICE_INTERFACE_MINOR,
+        .flags = MICROPIXEL_SERVICE_FLAG_CALL | MICROPIXEL_SERVICE_FLAG_EVENTS,
+        .capabilities = capabilities,
+        .max_request_bytes = std::max<uint32_t>(sizeof(micropixel_voice_read_text_request_t),
+                                                sizeof(micropixel_voice_set_preferences_request_t)),
+        .max_response_bytes =
+            static_cast<uint32_t>(sizeof(micropixel_voice_read_text_response_t)) + MICROPIXEL_VOICE_MAX_READ_BYTES,
+    };
+}
+
+int32_t VoiceServiceEndpoint::Call(uint32_t method_id, const uint8_t* request, uint32_t request_size, uint8_t* response,
+                                   uint32_t response_capacity, uint32_t& response_size_out) {
+    if (method_id == MICROPIXEL_VOICE_METHOD_GET_INFO) {
+        if (!EmptyRequest(request_size)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        return WriteResult<micropixel_voice_info_t>(context_.VoiceInfo(), response, response_capacity,
+                                                    response_size_out);
+    }
+    if (method_id == MICROPIXEL_VOICE_METHOD_START_SESSION) {
+        if (!EmptyRequest(request_size)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        return ResultStatus(context_.VoiceStart());
+    }
+    if (method_id == MICROPIXEL_VOICE_METHOD_CANCEL_SESSION) {
+        if (!EmptyRequest(request_size)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        return ResultStatus(context_.VoiceCancel());
+    }
+    if (method_id == MICROPIXEL_VOICE_METHOD_GET_STATE) {
+        if (!EmptyRequest(request_size)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        return WriteResult<micropixel_voice_state_response_t>(context_.VoiceState(), response, response_capacity,
+                                                              response_size_out);
+    }
+    if (method_id == MICROPIXEL_VOICE_METHOD_READ_TEXT) {
+        micropixel_voice_read_text_request_t wire{};
+        if (!ReadRequest(request, request_size, wire) ||
+            (wire.kind != MICROPIXEL_VOICE_TEXT_TRANSCRIPT && wire.kind != MICROPIXEL_VOICE_TEXT_RESPONSE) ||
+            wire.capacity == 0U || wire.capacity > MICROPIXEL_VOICE_MAX_READ_BYTES) {
+            return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        }
+        const uint32_t required = static_cast<uint32_t>(sizeof(micropixel_voice_read_text_response_t)) + wire.capacity;
+        if (response == nullptr || response_capacity < required) {
+            response_size_out = required;
+            return MICROPIXEL_STATUS_BUFFER_TOO_SMALL;
+        }
+        auto result = context_.VoiceReadText(wire.kind, wire.revision, wire.offset,
+                                             {response + sizeof(micropixel_voice_read_text_response_t), wire.capacity});
+        if (!result) return result.error().status;
+        micropixel_voice_read_text_response_t header{};
+        header.size = static_cast<uint16_t>(sizeof(header) + result->chunk_length);
+        header.kind = wire.kind;
+        header.flags = result->flags;
+        header.revision = result->revision;
+        header.total_length = result->total_length;
+        header.chunk_length = result->chunk_length;
+        std::memcpy(response, &header, sizeof(header));
+        response_size_out = header.size;
+        return MICROPIXEL_STATUS_OK;
+    }
+    if (method_id == MICROPIXEL_VOICE_METHOD_GET_PREFERENCES) {
+        if (!EmptyRequest(request_size)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        return WriteResult<micropixel_voice_preferences_t>(context_.VoicePreferences(), response, response_capacity,
+                                                           response_size_out);
+    }
+    if (method_id == MICROPIXEL_VOICE_METHOD_SET_PREFERENCES) {
+        micropixel_voice_set_preferences_request_t wire{};
+        if (!ReadRequest(request, request_size, wire) || wire.mask == 0U ||
+            (wire.mask & ~(MICROPIXEL_VOICE_PREFERENCE_RESPONSE_GAIN | MICROPIXEL_VOICE_PREFERENCE_LOCAL_COMMANDS)) !=
+                0U ||
+            wire.response_gain_per_mille > 1000U || wire.local_commands_enabled > 1U || wire.reserved0 != 0U) {
+            return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        }
+        return ResultStatus(context_.VoiceSetPreferences(wire));
+    }
+    if (method_id == MICROPIXEL_VOICE_METHOD_GET_DIAGNOSTICS) {
+        if (!EmptyRequest(request_size)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        return WriteResult<micropixel_voice_diagnostics_t>(context_.VoiceDiagnostics(), response, response_capacity,
+                                                           response_size_out);
+    }
+    if (method_id == MICROPIXEL_VOICE_METHOD_RUN_DIAGNOSTIC) {
+        micropixel_voice_run_diagnostic_request_t wire{};
+        if (!ReadRequest(request, request_size, wire) || wire.reserved0 != 0U ||
+            (wire.kind != MICROPIXEL_VOICE_DIAGNOSTIC_MICROPHONE && wire.kind != MICROPIXEL_VOICE_DIAGNOSTIC_SPEAKER)) {
+            return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        }
+        return ResultStatus(context_.VoiceRunDiagnostic(wire.kind));
+    }
+    if (method_id == MICROPIXEL_VOICE_METHOD_CLEAR_CONTEXT) {
+        if (!EmptyRequest(request_size)) return MICROPIXEL_STATUS_INVALID_ARGUMENT;
+        return ResultStatus(context_.VoiceClearContext());
     }
     return MICROPIXEL_STATUS_UNSUPPORTED;
 }

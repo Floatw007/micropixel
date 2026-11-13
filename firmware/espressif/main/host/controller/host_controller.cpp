@@ -463,10 +463,12 @@ host_ui::SystemMenuModel MakeSystemMenuModel(const host_ui::StatusLayerModel& st
         .cellular_connected = status.cellular_connected,
         .cellular_connecting = status.cellular_state == device::CellularState::kConnecting,
         .idle_power_action = status.idle_power_action,
+        .display_sleep_available = false,
         .locale = effective_locale,
         .language = host_ui::LocaleDisplayName(effective_locale),
         .installed_app_count = catalog.count,
         .auto_sleep_timeout_minutes = status.auto_sleep_timeout_minutes,
+        .display_sleep_timeout_minutes = status.display_sleep_timeout_minutes,
         .theme_mode = status.theme_mode,
         .wifi_available = status.wifi_available,
         .wifi_enabled = status.wifi_enabled,
@@ -1442,10 +1444,16 @@ bool SupportedAutoSleepTimeout(uint32_t minutes) {
     return minutes == 1U || minutes == 5U || minutes == 10U || minutes == 30U;
 }
 
+bool SupportedDisplaySleepTimeout(uint32_t minutes) {
+    return minutes == 1U || minutes == 2U || minutes == 5U || minutes == 10U;
+}
+
 bool RunPowerManagement(host_ui::SystemShell& shell, host_ui::StatusLayerModel& status_model,
                         host_ui::SystemSettingsStore& settings_store, RemoteCommandPump* command_pump) {
     auto model = host_ui::PowerManagementModel{
         .auto_sleep_timeout_minutes = status_model.auto_sleep_timeout_minutes,
+        .display_sleep_timeout_minutes = status_model.display_sleep_timeout_minutes,
+        .display_sleep_available = shell.SupportsDisplaySleepTimeout(),
         .idle_power_action = status_model.idle_power_action,
     };
     const auto show_result = shell.ShowPowerManagement(model);
@@ -1466,6 +1474,21 @@ bool RunPowerManagement(host_ui::SystemShell& shell, host_ui::StatusLayerModel& 
             action->type == host_ui::SystemUiActionType::kSuspendToHall) {
             shell.LeavePowerManagement();
             return true;
+        }
+
+        if (action->type == host_ui::SystemUiActionType::kSetDisplaySleepTimeout && model.display_sleep_available &&
+            SupportedDisplaySleepTimeout(action->value)) {
+            const auto minutes = static_cast<uint8_t>(action->value);
+            if (minutes != status_model.display_sleep_timeout_minutes) {
+                status_model.display_sleep_timeout_minutes = minutes;
+                model.display_sleep_timeout_minutes = minutes;
+                shell.SetDisplaySleepTimeout(minutes);
+                shell.UpdatePowerManagement(model);
+                if (settings_store.ready() && !settings_store.Save(status_model)) {
+                    ESP_LOGW(kTag, "Display sleep setting changed but could not be persisted");
+                }
+            }
+            continue;
         }
 
         if (status_model.idle_power_action == device::IdlePowerAction::kDisabled) {
@@ -1700,6 +1723,7 @@ bool RunSystemMenu(host_ui::SystemShell& shell, device::Battery& battery, device
     auto* language_packs = shell.language_packs();
     const auto make_model = [&]() {
         auto model = MakeSystemMenuModel(status_model, catalog, remote_control_model, menu_locale.data());
+        model.display_sleep_available = shell.SupportsDisplaySleepTimeout();
         model.language_view = language_view;
         model.language_sheet = language_sheet;
         model.language_updating = language_updating;
@@ -1948,7 +1972,9 @@ bool RunSystemMenu(host_ui::SystemShell& shell, device::Battery& battery, device
                         return false;
                     }
                 } else if (action->value == static_cast<uint32_t>(host_ui::SystemMenuItem::kPowerManagement)) {
-                    if (status_model.idle_power_action == device::IdlePowerAction::kDisabled) break;
+                    if (status_model.idle_power_action == device::IdlePowerAction::kDisabled &&
+                        !shell.SupportsDisplaySleepTimeout())
+                        break;
                     shell.LeaveSystemMenu();
                     if (!RunPowerManagement(shell, status_model, settings_store, command_pump)) {
                         return false;
@@ -3043,6 +3069,10 @@ class ActiveHost final {
                 },
             .context = this,
         };
+        if (open_system_menu_requested_) {
+            open_system_menu_requested_ = false;
+            if (!shell_.NotifyOpenSystemMenu()) ESP_LOGW(kTag, "could not queue requested system settings");
+        }
 
         CpuUsageSampler cpu_sampler;
         cpu_sampler.Reset();
@@ -3469,6 +3499,16 @@ class ActiveHost final {
                 SuspendToHall(action->timestamp_us);
                 return;
             }
+            if (action->type == host_ui::SystemUiActionType::kOpenSystemMenu &&
+                app_controller_.state() == AppLifecycleState::kForeground) {
+                open_system_menu_requested_ = true;
+                controls_.UpdateAppLifecycle(catalog_.apps[foreground_index_].app_id.data(), "stopping");
+                if (!app_controller_.RequestStop()) {
+                    open_system_menu_requested_ = false;
+                    ESP_LOGW(kTag, "could not stop App before opening system settings");
+                }
+                continue;
+            }
             ESP_LOGW(kTag, "ignored Guest system action=%u in lifecycle state=%u", static_cast<unsigned>(action->type),
                      static_cast<unsigned>(app_controller_.state()));
         }
@@ -3751,6 +3791,7 @@ class ActiveHost final {
     }
 
     host_ui::HallModel hall_model_{};
+    bool open_system_menu_requested_{};
     runtime::InstalledAppCatalog catalog_;
     runtime::AppStore& app_store_;
     AppController app_controller_;
@@ -3897,6 +3938,9 @@ void HostController::Run() {
             return snapshot.external_power_available;
         },
         this, status_model.idle_power_action);
+    if (shell_.SupportsDisplaySleepTimeout()) {
+        shell_.SetDisplaySleepTimeout(status_model.display_sleep_timeout_minutes);
+    }
     InitializeHostSettings(settings_store, status_model, wifi_, cellular_, remote_control_);
     shell_.ApplyTheme(status_model.theme_mode);
     shell_.ApplyBrightness(status_model.brightness_percent);
@@ -3921,8 +3965,10 @@ void HostController::Run() {
     UpdateControlCatalog(controls_, *catalog);
     controls_.UpdateAppLifecycle(nullptr, "not_running");
 
-    auto runtime_result =
-        runtime::AppRuntime::Initialize(devices_, background_executor_, locale.effective(), &system_logs_);
+    auto runtime_result = runtime::AppRuntime::Initialize(
+        devices_, background_executor_, locale.effective(),
+        [](void* context) { return static_cast<host_ui::SystemShell*>(context)->NotifyOpenSystemMenu(); }, &shell_,
+        &system_logs_);
     if (!runtime_result) {
         ESP_LOGE(kTag, "AppRuntime initialization failed: error=%u", static_cast<unsigned>(runtime_result.error()));
         RunUnavailableHall(shell_, network_, battery_, wifi_, cellular_, power_, power_state_, *catalog,

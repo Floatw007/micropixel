@@ -1,4 +1,4 @@
-// Graphics 1.6 raster kernels on the raw ABI: texture and palette uploads, a
+// Host raster kernels on the raw ABI: texture and palette uploads, a
 // COLUMN, SPAN_PAIR, SPRITE and RECT list accepted into a Host-owned Direct
 // Surface buffer (pixel output is verified by the Host unit test; the Guest
 // never sees Host buffers), then every malformed request refused with the

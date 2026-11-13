@@ -64,9 +64,11 @@ AOT_FLAG_MASK = (
 DEFAULT_AOT_TARGET = "riscv32-ilp32f"
 LAUNCH_ARGUMENT_MAX_COUNT = 16
 LAUNCH_ARGUMENT_MAX_BYTES = 512
-NETWORK_COMMANDS = frozenset({"device", "firmware", "app", "artifact", "logs", "screenshot", "input", "job", "terminal"})
+NETWORK_COMMANDS = frozenset({"device", "firmware", "app", "artifact", "logs", "screenshot", "input", "job", "terminal", "voice"})
 TERMINAL_PROFILE_HEADER = struct.Struct("<IHHQHHHH")
 TERMINAL_PROFILE_MAGIC = 0x31544E4D
+VOICE_PROFILE_HEADER = struct.Struct("<IHHIHHHHI")
+VOICE_PROFILE_MAGIC = 0x3158504D
 ALL_API_SCOPES = (
     "device:read",
     "device:manage",
@@ -1026,6 +1028,77 @@ class UsbControlClient:
             raise CliError(f"Device returned an unexpected terminal clear result: {detail}")
         return self.terminal_status()
 
+    def configure_voice(self, url: str, ca_path: Path | None, token_path: Path, allow_insecure: bool) -> dict[str, Any]:
+        try:
+            url_bytes = url.encode("ascii")
+        except UnicodeEncodeError as error:
+            raise CliError("Voice gateway URL must be ASCII") from error
+        ca_bytes = b"" if ca_path is None else ca_path.read_bytes()
+        token_bytes = token_path.read_bytes().strip()
+        secure = url.startswith("wss://")
+        insecure = url.startswith("ws://") and allow_insecure
+        if (not secure and not insecure) or len(url_bytes) > 256:
+            raise CliError("Voice URL must use wss://, or ws:// together with --allow-insecure")
+        if secure and not ca_bytes:
+            raise CliError("A WSS voice URL requires --ca-file")
+        if len(ca_bytes) > 4096:
+            raise CliError("Voice CA file must contain at most 4096 bytes")
+        if not (1 <= len(token_bytes) <= 1024) or any(value < 0x21 or value > 0x7E for value in token_bytes):
+            raise CliError("Voice token file must contain one printable ASCII token of at most 1024 bytes")
+        flags = 1 if allow_insecure else 0
+        blob = VOICE_PROFILE_HEADER.pack(
+            VOICE_PROFILE_MAGIC, 1, VOICE_PROFILE_HEADER.size, 0,
+            len(url_bytes), len(ca_bytes), len(token_bytes), flags, 0,
+        ) + url_bytes + ca_bytes + token_bytes
+        digest = hashlib.sha256(blob).hexdigest()
+        request_id = self._allocate_request_id()
+        self._send(request_id, "VOICE_CONFIGURE_BEGIN", f"{len(blob)} {digest}")
+        ready = self._read_response(request_id, self.timeout)
+        fields = ready.split()
+        if len(fields) != 2 or fields[0] != "VOICE_CONFIG_READY":
+            raise CliError(f"Device rejected the voice configuration session: {ready}")
+        chunk_size = min(self.CHUNK_SIZE, int(fields[1]))
+        try:
+            for offset in range(0, len(blob), chunk_size):
+                chunk = blob[offset : offset + chunk_size]
+                self._send(request_id, "VOICE_CONFIGURE_CHUNK", f"{offset} {base64.b64encode(chunk).decode('ascii')}")
+                acknowledgment = self._read_response(request_id, self.timeout)
+                if acknowledgment != f"VOICE_CONFIG_CHUNK {offset + len(chunk)}":
+                    raise CliError(f"Device acknowledged an unexpected voice configuration offset: {acknowledgment}")
+            self._send(request_id, "VOICE_CONFIGURE_COMMIT")
+            completed = self._read_response(request_id, self.timeout)
+        except Exception:
+            with contextlib.suppress(Exception):
+                self._send(request_id, "VOICE_CONFIGURE_ABORT")
+            raise
+        if completed != "VOICE_CONFIGURED":
+            raise CliError(f"Device returned an unexpected voice configuration result: {completed}")
+        return self.voice_status()
+
+    def voice_status(self) -> dict[str, Any]:
+        fields = self.request("VOICE_STATUS").split()
+        if len(fields) != 6 or fields[0] != "VOICE_STATUS":
+            raise CliError("Device returned a malformed voice status")
+        try:
+            revision = int(fields[3])
+        except ValueError as error:
+            raise CliError("Device returned an invalid voice status") from error
+        return {
+            "configured": fields[1] == "1",
+            "allowInsecure": fields[2] == "1",
+            "revision": revision,
+            "certificateFingerprint": None if fields[4] == "-" else fields[4],
+            "tokenSuffix": None if fields[5] == "-" else fields[5],
+            "transport": "usb",
+            "port": self.port,
+        }
+
+    def clear_voice(self) -> dict[str, Any]:
+        detail = self.request("VOICE_CLEAR")
+        if detail != "VOICE_CLEARED":
+            raise CliError(f"Device returned an unexpected voice clear result: {detail}")
+        return self.voice_status()
+
 
 def list_local_ports(include_all: bool = False, probe_timeout: float = 2.0) -> dict[str, Any]:
     if probe_timeout <= 0:
@@ -1947,6 +2020,7 @@ def _run_build_sources(args: argparse.Namespace) -> None:
             root / "guest/runtime/system.cpp",
             root / "guest/runtime/storage.cpp",
             root / "guest/runtime/network.cpp",
+            root / "guest/runtime/voice.cpp",
             root / "guest/runtime/audio.cpp",
             root / "guest/runtime/timers.cpp",
             root / "guest/runtime/devices.cpp",
@@ -3470,6 +3544,13 @@ def execute_usb(args: argparse.Namespace, client: UsbControlClient) -> None:
         print_json(client.terminal_status())
     elif args.command == "terminal" and args.terminal_command == "clear":
         print_json(client.clear_terminal())
+    elif args.command == "voice" and args.voice_command == "configure":
+        print_json(client.configure_voice(args.url, Path(args.ca_file) if args.ca_file else None,
+                                          Path(args.token_file), args.allow_insecure))
+    elif args.command == "voice" and args.voice_command == "status":
+        print_json(client.voice_status())
+    elif args.command == "voice" and args.voice_command == "clear":
+        print_json(client.clear_voice())
     else:
         suffix = getattr(args, "app_command", getattr(args, "device_command", ""))
         raise CliError(f"{args.command} {suffix}".strip() + " is not available over USB")
@@ -3591,6 +3672,16 @@ def parser() -> argparse.ArgumentParser:
     terminal_configure.add_argument("--app-id", default="canteen.merchant-terminal")
     terminal_modes.add_parser("status", help="Show non-secret terminal configuration status")
     terminal_modes.add_parser("clear", help="Erase the terminal authentication profile")
+
+    voice = commands.add_parser("voice", help="Provision and inspect the private voice gateway profile over USB")
+    voice_modes = voice.add_subparsers(dest="voice_command", required=True)
+    voice_configure = voice_modes.add_parser("configure", help="Install gateway URL, CA, and device bearer token")
+    voice_configure.add_argument("--url", required=True, help="Voice gateway WebSocket URL")
+    voice_configure.add_argument("--ca-file", help="PEM CA certificate file; required for wss://")
+    voice_configure.add_argument("--token-file", required=True, help="Device bearer token file; never printed")
+    voice_configure.add_argument("--allow-insecure", action="store_true", help="Explicitly allow ws:// for LAN development")
+    voice_modes.add_parser("status", help="Show non-secret voice gateway configuration status")
+    voice_modes.add_parser("clear", help="Erase the voice gateway profile")
 
     port = commands.add_parser("port", help="Discover local serial ports and MicroPixel hardware")
     port_modes = port.add_subparsers(dest="port_command", required=True)
@@ -3734,13 +3825,15 @@ def parser() -> argparse.ArgumentParser:
 
 def resolve_transport(args: argparse.Namespace) -> argparse.Namespace:
     if args.transport is None:
-        if args.port or args.command == "terminal":
+        if args.port or args.command in {"terminal", "voice"}:
             args.transport = "usb"
         else:
             args.transport = os.environ.get("MICROPIXEL_TRANSPORT", "remote")
         return args
     if args.transport == "remote" and args.port:
         raise CliUsageError("--port implies USB transport; omit --transport remote or pass --transport usb")
+    if args.transport == "remote" and args.command in {"terminal", "voice"}:
+        raise CliUsageError(f"{args.command} commands are available only over USB")
     return args
 
 

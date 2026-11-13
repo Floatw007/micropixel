@@ -79,7 +79,8 @@ void AppSession::ContextDeleter::operator()(GuestContext* context) const {
 std::expected<AppSession, AppSessionFailure> AppSession::Create(
     device::DeviceServices& devices, work::BackgroundExecutor& background_executor,
     const micropixel_bundle_source_t& source, std::string_view effective_locale,
-    const micropixel_system_launch_arguments_response_t& launch_arguments, GuestLogSink* log_sink) {
+    const micropixel_system_launch_arguments_response_t& launch_arguments, OpenSettingsSink open_settings,
+    void* open_settings_context, GuestLogSink* log_sink) {
     int64_t stage_started_us = esp_timer_get_time();
     ESP_LOGD(kTag, "AppSession stage begin: package");
     auto package_result = AotPackage::Load(source);
@@ -140,7 +141,8 @@ std::expected<AppSession, AppSessionFailure> AppSession::Create(
     ContextPtr context(context_storage == nullptr
                            ? nullptr
                            : std::construct_at(context_storage, package.raw(), devices, background_executor,
-                                               effective_locale, launch_arguments, log_sink));
+                                               effective_locale, launch_arguments, open_settings, open_settings_context,
+                                               log_sink));
     if (context == nullptr || !context->valid()) {
         ESP_LOGE(kTag, "unable to initialize bounded Guest services");
         return std::unexpected(
@@ -260,8 +262,6 @@ const char* AppSessionErrorCode(AppSessionError error) {
             return "required_font_missing";
         case AppSessionError::kPackageLoad:
             return "package_load_failed";
-        case AppSessionError::kLaunchBitmap:
-            return "launch_bitmap_failed";
         case AppSessionError::kModuleLoad:
             return "aot_load_failed";
         case AppSessionError::kGuestInstantiation:
@@ -292,7 +292,6 @@ const char* AppSessionErrorPhase(AppSessionError error) {
     switch (error) {
         case AppSessionError::kRequiredFont:
         case AppSessionError::kPackageLoad:
-        case AppSessionError::kLaunchBitmap:
             return "package";
         case AppSessionError::kModuleLoad:
             return "load";

@@ -56,6 +56,8 @@ SDK 让应用通过强类型对象使用图形、输入、音频和设备能力�
 | 持久化分数与设置 | `KVStore::GetU32Or/SetU32/GetBytes` | `storage.hpp` |
 | 启动参数开关与数值 | `LaunchArguments::HasFlag/GetUnsigned/FindValue` | `launch_arguments.hpp` |
 | 多语言字符串 | `Localization::CurrentLocale` + 生成的字符串表 | `localization.hpp` |
+| 托管 HTTPS 请求（Host 代发） | `Network::info()/Start()`、`NetworkRequest::Read/Cancel/Close` | `network.hpp` |
+| 语音会话、转写/回复文本、偏好 | `app.voice()`、`Voice::StartSession/CancelSession/ReadText` | `voice.hpp` |
 | 振动、GPIO、电源、设备发现 | `Haptics`、`Gpio`、`PowerInfo`、`Devices` | `haptics.hpp`、`gpio.hpp`、`power_info.hpp`、`devices.hpp` |
 
 ## 工具链兼容性
@@ -529,9 +531,10 @@ Result 提供 expected 风格的值/错误访问；读取错误状态的 value �
 析构不 panic，只做 best-effort 释放。Host 捕获 Trap、记录诊断并清理 Session。
 
 Public 方法不与 Wasm import 一一对应，SDK/Runtime 隐藏 service ID、wire 与 handle。
-新能力通过 Service 版本和 capability 演进，应用对可选能力明确回退。当前 Bundle requirements 与
-完整的启动前能力预检尚未实现，不能假定构造 Application 已检查应用全部需求。
-Network、Camera 和网络资源加载尚未定义公开接口。
+新能力通过 Service 版本和 capability 演进，应用对可选能力明确回退。Bundle requirements 会在安装和
+启动前校验 Core ABI 与 Service 版本；显示尺寸、布局与 capability 的完整预检尚未接入流程，
+不能假定构造 Application 已检查应用全部需求。Network 1.0 已提供 HTTPS 请求接口
+（`Application::network()`），Camera 和网络资源流式加载尚未定义公开接口。
 
 实现规则见 [代码风格](../../docs/development/code-style.zh-CN.md)，边界验收见
 [conformance](../tests/conformance/)。

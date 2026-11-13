@@ -37,6 +37,7 @@
       "firmware/espressif/sdkconfig.p4.defaults",
       "firmware/espressif/sdkconfig.p4-function-ev.defaults"
     ],
+    "app_store_size": "0x0180000",
     "port_env": "P4_FUNCTION_EV_PORT",
     "baud_env": "P4_FUNCTION_EV_BAUD",
     "default_baud": 2000000,

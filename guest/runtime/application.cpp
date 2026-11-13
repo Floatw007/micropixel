@@ -116,8 +116,7 @@ bool Application::DecodeEventInternal(Event& event, uint64_t timeout_us) const {
         return true;
     }
 
-    if (raw.service_id == MICROPIXEL_SERVICE_NETWORK &&
-        raw.event_id == MICROPIXEL_NETWORK_EVENT_REQUEST_COMPLETE) {
+    if (raw.service_id == MICROPIXEL_SERVICE_NETWORK && raw.event_id == MICROPIXEL_NETWORK_EVENT_REQUEST_COMPLETE) {
         micropixel_network_complete_event_payload_t payload{};
         CopyBytes(&payload, raw.payload, sizeof(payload));
         if (payload.request_handle == 0U || payload.request_handle != raw.source || payload.reserved0 != 0U ||
@@ -126,9 +125,43 @@ bool Application::DecodeEventInternal(Event& event, uint64_t timeout_us) const {
             payload.body_length > MICROPIXEL_NETWORK_MAX_RESPONSE_BYTES) {
             runtime::Panic("application.wait_event.network_payload", MICROPIXEL_STATUS_INTERNAL);
         }
-        event = Event{NetworkCompleteEvent{timestamp, payload.request_handle, raw.status,
-                                           payload.body_length, payload.http_status, payload.source,
-                                           payload.cache_age_seconds}};
+        event = Event{NetworkCompleteEvent{timestamp, payload.request_handle, raw.status, payload.body_length,
+                                           payload.http_status, payload.source, payload.cache_age_seconds}};
+        return true;
+    }
+
+    if (raw.service_id == MICROPIXEL_SERVICE_VOICE && raw.event_id >= MICROPIXEL_VOICE_EVENT_STATE_CHANGED &&
+        raw.event_id <= MICROPIXEL_VOICE_EVENT_LOCAL_COMMAND) {
+        micropixel_voice_event_payload_t payload{};
+        CopyBytes(&payload, raw.payload, sizeof(payload));
+        if (payload.reserved0 != 0U ||
+            (payload.flags & ~(MICROPIXEL_VOICE_TEXT_FINAL | MICROPIXEL_VOICE_TEXT_TRUNCATED)) != 0U ||
+            payload.kind > MICROPIXEL_VOICE_TEXT_RESPONSE) {
+            runtime::Panic("application.wait_event.voice_payload", MICROPIXEL_STATUS_INTERNAL);
+        }
+        VoiceState state = VoiceState::kIdle;
+        uint16_t level = 0U;
+        VoiceLocalCommand local_command = VoiceLocalCommand::kSleep;
+        if (raw.event_id == MICROPIXEL_VOICE_EVENT_STATE_CHANGED) {
+            if (payload.value > MICROPIXEL_VOICE_STATE_ERROR) {
+                runtime::Panic("application.wait_event.voice_state", MICROPIXEL_STATUS_INTERNAL);
+            }
+            state = static_cast<VoiceState>(payload.value);
+        } else if (raw.event_id == MICROPIXEL_VOICE_EVENT_INPUT_LEVEL) {
+            if (payload.value > 1000U) runtime::Panic("application.wait_event.voice_level", MICROPIXEL_STATUS_INTERNAL);
+            level = static_cast<uint16_t>(payload.value);
+        } else if (raw.event_id == MICROPIXEL_VOICE_EVENT_LOCAL_COMMAND) {
+            if (payload.kind != 0U || payload.flags != 0U || payload.total_length != 0U ||
+                payload.value < MICROPIXEL_VOICE_LOCAL_COMMAND_SLEEP ||
+                payload.value > MICROPIXEL_VOICE_LOCAL_COMMAND_VOLUME_DOWN) {
+                runtime::Panic("application.wait_event.voice_local_command", MICROPIXEL_STATUS_INTERNAL);
+            }
+            local_command = static_cast<VoiceLocalCommand>(payload.value);
+        }
+        const auto kind =
+            payload.kind == MICROPIXEL_VOICE_TEXT_RESPONSE ? VoiceTextKind::kResponse : VoiceTextKind::kTranscript;
+        event = Event{VoiceEvent{timestamp, static_cast<VoiceEventType>(raw.event_id), kind, state, payload.flags,
+                                 payload.revision, payload.total_length, level, local_command, raw.status}};
         return true;
     }
 
@@ -235,8 +268,8 @@ bool Application::DecodeEventInternal(Event& event, uint64_t timeout_us) const {
         const bool trigger =
             payload.axis == MICROPIXEL_AXIS_LEFT_TRIGGER || payload.axis == MICROPIXEL_AXIS_RIGHT_TRIGGER;
         if (payload.axis < MICROPIXEL_AXIS_LEFT_X || payload.axis > MICROPIXEL_AXIS_RIGHT_TRIGGER ||
-            payload.axis != raw.source || payload.reserved0 != 0U || payload.reserved1 != 0U ||
-            payload.value > 32767 || payload.value < (trigger ? 0 : -32767)) {
+            payload.axis != raw.source || payload.reserved0 != 0U || payload.reserved1 != 0U || payload.value > 32767 ||
+            payload.value < (trigger ? 0 : -32767)) {
             runtime::Panic("application.wait_event.axis_payload", MICROPIXEL_STATUS_INTERNAL);
         }
         event = Event{AxisEvent{timestamp, static_cast<GamepadAxis>(payload.axis),

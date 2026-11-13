@@ -325,6 +325,7 @@ WamrRuntime& WamrRuntime::operator=(WamrRuntime&& other) noexcept {
 WamrRuntime::~WamrRuntime() { Reset(); }
 
 std::expected<WamrRuntime, WamrFailure> WamrRuntime::Initialize() {
+    micropixel_check_heap("before WAMR full init");
     RuntimeInitArgs args{};
     args.mem_alloc_type = Alloc_With_Allocator;
     args.mem_alloc_option.allocator.malloc_func = reinterpret_cast<void*>(WamrMalloc);
@@ -337,6 +338,7 @@ std::expected<WamrRuntime, WamrFailure> WamrRuntime::Initialize() {
     if (!runtime.initialized_) {
         return std::unexpected(MakeFailure(WamrError::kInitialization, "wasm_runtime_full_init failed"));
     }
+    micropixel_check_heap("after WAMR full init");
     wasm_runtime_set_enlarge_mem_error_callback(LogMemoryGrowthFailure, nullptr);
     return runtime;
 }

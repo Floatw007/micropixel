@@ -1,0 +1,15 @@
+services:
+  voice-gateway:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      VOICE_BACKEND: ${VOICE_BACKEND:-mock}
+      VOICE_DEVICE_TOKEN: ${VOICE_DEVICE_TOKEN:?set VOICE_DEVICE_TOKEN in .env}
+      ARK_API_KEY: ${ARK_API_KEY:-}
+      DOUBAO_MODEL: ${DOUBAO_MODEL:-doubao-seed-2-0-mini-260428}
+      VOLC_SPEECH_API_KEY: ${VOLC_SPEECH_API_KEY:-}
+      VOLC_ASR_RESOURCE_ID: ${VOLC_ASR_RESOURCE_ID:-volc.seedasr.sauc.duration}
+      VOLC_TTS_RESOURCE_ID: ${VOLC_TTS_RESOURCE_ID:-seed-tts-2.0}
+      VOLC_TTS_SPEAKER: ${VOLC_TTS_SPEAKER:-}
+    restart: unless-stopped

@@ -10,7 +10,7 @@ namespace micropixel {
 class RasterDrawList;
 
 // A textured ground plane seen in perspective from a camera above it, drawn
-// with one RasterDrawList::Span record per screen row (Graphics 1.6): the
+// with one RasterDrawList::Span record per screen row: the
 // "Mode 7" of pseudo-3D racers, kart tracks and top-down ground.
 //
 // Every screen row below the horizon sees the plane at one depth, so the
